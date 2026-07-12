@@ -30,7 +30,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-action="tab" data-tab="today">今日</button>
-      <button class="tab" data-action="tab" data-tab="gantt">ガント</button>
+      <button class="tab" data-action="tab" data-tab="gantt">計画</button>
       <button class="tab" data-action="tab" data-tab="plan">課題</button>
     </nav>
 
@@ -83,11 +83,13 @@
         <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
         <button class="sbtn" data-action="g-today">今日へ</button>
         <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
+        <button class="sbtn muted" data-action="g-toggledone" id="g-donebtn">完了を表示</button>
       </div>
       <div id="gantt"></div>
       <div class="t-sub" style="margin:8px 2px 16px;">
-        マスをタップするとその日に割り当て(●)/解除できます。✓は完了、🔁は周期タスクの自動予定。
-        日付や「見積合計」の行をタップすると、下にその日の詳細が開き時刻を調整できます。
+        マスをタップするたびに 空→●実施日→○予備日→空 と切り替わります(周期タスクはタップで自動予定のオン/オフ)。
+        ●や○は横にドラッグすると日付を移動できます。✓は完了、🔁は自動予定、点線の○は周期タスクの自動予備日。
+        日付や「見積合計」をタップすると下に詳細が開きます。
       </div>
 
       <section id="day-detail"></section>
@@ -176,6 +178,7 @@
           <label>種類
             <select id="t-type">
               <option value="single">1回限り</option>
+              <option value="irregular">不定期(繰り返し)</option>
               <option value="recurring">周期的</option>
             </select>
           </label>
@@ -233,6 +236,28 @@
             </label>
             <label>日
               <input type="number" id="t-rmday" min="1" max="31" value="1">
+            </label>
+          </div>
+          <label class="f-label">予備日(自動予定に対する控えの日)
+            <select id="t-rsmode">
+              <option value="">なし</option>
+              <option value="after">実施日の◯日後</option>
+              <option value="before">実施日の◯日前</option>
+              <option value="weekday">同じ週の◯曜日</option>
+            </select>
+          </label>
+          <div id="rs-n" class="form-row hidden">
+            <label>日数
+              <input type="number" id="t-rsn" min="1" max="30" value="1">
+            </label>
+          </div>
+          <div id="rs-wd" class="form-row hidden">
+            <label>曜日
+              <select id="t-rswd">
+                <option value="0">日</option><option value="1">月</option><option value="2">火</option>
+                <option value="3">水</option><option value="4">木</option><option value="5">金</option>
+                <option value="6">土</option>
+              </select>
             </label>
           </div>
         </div>

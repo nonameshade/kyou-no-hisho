@@ -579,3 +579,75 @@ body[data-view="gantt"] #fab { display: none; }
 .target-row input.rank { width: 56px; flex-shrink: 0; text-align: center; }
 .target-row input.ttext { flex: 1; }
 .target-row .sbtn { flex-shrink: 0; }
+
+/* ---------- フェーズ5:2ペインガント・予備日・ドラッグ ---------- */
+.g-wrap2 { display: flex; align-items: stretch; }
+.g-side {
+  width: 170px;
+  min-width: 170px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  z-index: 2;
+}
+.g-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+}
+.g-scell {
+  height: 34px;
+  border-top: 1px solid #EEF1F4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.g-scell .g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-scell.done-task .g-name { text-decoration: line-through; color: var(--done); }
+.g-trow {
+  position: relative;
+  height: 34px;
+  border-top: 1px solid #EEF1F4;
+  box-sizing: border-box;
+}
+.g-sh { height: 32px; border-top: none; font-size: 11px; color: var(--muted); font-weight: 700; }
+.g-ss { height: 24px; font-size: 11px; color: var(--muted); font-weight: 600; }
+.g-trow.g-sh, .g-trow.g-ss { border-top: none; }
+.g-trow.g-ss { border-top: 1px solid #EEF1F4; }
+.g-side .g-ss { border-top: 1px solid #EEF1F4; }
+.g-hcell2 { padding-top: 2px; }
+.g-sum-cell { top: 2px; bottom: 2px; }
+.g-cell.has-mark { touch-action: none; }
+.g-cell .mark.res-m {
+  background: transparent;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-size: 0;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+}
+.g-cell .mark.ares-m {
+  background: transparent;
+  border: 2px dashed var(--muted);
+  color: transparent;
+  font-size: 0;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  opacity: .8;
+}
+.g-dropcol {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  opacity: .18;
+  border-radius: 6px;
+  z-index: 2;
+  pointer-events: none;
+}

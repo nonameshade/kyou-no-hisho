@@ -52,7 +52,7 @@ const uid = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}
 const ISSUE_COLORS = ["#0E7C66", "#3D5A9E", "#B0692B", "#8A4E9E", "#3F7A3F", "#A8455C"];
 
 /* ---------- 状態 ---------- */
-let state = { v: 3, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [] };
+let state = { v: 4, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [] };
 let wakeLock = null;
 let lastBeep = 0;
 let renderedCurrentId = null;
@@ -73,7 +73,7 @@ function load() {
   } catch (e) {
     console.error("読み込みに失敗しました", e);
   }
-  if (!state || typeof state !== "object") state = { v: 3, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [] };
+  if (!state || typeof state !== "object") state = { v: 4, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [] };
   migrate();
 }
 
@@ -115,10 +115,15 @@ function migrate() {
     state.skips = [];
     state.v = 3;
   }
+  if (state.v < 4) {
+    state.reserves = [];
+    state.v = 4;
+  }
   if (!Array.isArray(state.issues)) state.issues = [];
   if (!Array.isArray(state.tasks)) state.tasks = [];
   if (!Array.isArray(state.assignments)) state.assignments = [];
   if (!Array.isArray(state.skips)) state.skips = [];
+  if (!Array.isArray(state.reserves)) state.reserves = [];
   if (!state.updatedAt) state.updatedAt = 0;
 }
 
@@ -189,6 +194,7 @@ function occursOn(task, dateKey) {
 }
 
 function recurrenceLabel(task) {
+  if (task.type === "irregular") return "不定期";
   const r = task.recurrence;
   if (!r) return "1回限り";
   const W = "日月火水木金土";
@@ -222,6 +228,40 @@ function materializeToday() {
       }
     });
   if (changed) save();
+}
+
+/* ---------- 予備日 ---------- */
+const findReserve = (taskId, dk) =>
+  state.reserves.find((r) => r.taskId === taskId && r.date === dk) || null;
+
+/* 周期タスク:1つの実施日に対するルール上の予備日 */
+function reserveFor(task, dk) {
+  const rr = task.reserveRule;
+  if (!rr) return null;
+  if (rr.mode === "after") return addDays(dk, rr.n || 1);
+  if (rr.mode === "before") return addDays(dk, -(rr.n || 1));
+  if (rr.mode === "weekday") {
+    const d = new Date(dk + "T00:00:00");
+    const r = addDays(dk, rr.weekday - d.getDay()); // 同じ週(日曜はじまり)
+    return r === dk ? null : r;
+  }
+  return null;
+}
+
+/* 周期タスク:期間内に落ちるルール予備日の集合 */
+function ruleReserveDates(task, from, to) {
+  const out = new Set();
+  if (task.type !== "recurring" || !task.reserveRule) return out;
+  let d = addDays(from, -35);
+  const end = addDays(to, 35);
+  while (d <= end) {
+    if (occursOn(task, d) && !hasSkip(task.id, d)) {
+      const r = reserveFor(task, d);
+      if (r && r >= from && r <= to) out.add(r);
+    }
+    d = addDays(d, 1);
+  }
+  return out;
 }
 
 /* その日の項目:実際の割り当て + 周期タスクの自動予定(今日以降・スキップ除く) */
@@ -537,18 +577,27 @@ function renderTimeline() {
 }
 
 /* ---------- 描画:統合ガント(計画モード) ---------- */
+let showDone = localStorage.getItem("hisho:ui:showdone") === "1";
+
 function renderGantt() {
   const box = document.getElementById("gantt");
+  const doneBtn = document.getElementById("g-donebtn");
+  if (doneBtn) doneBtn.textContent = showDone ? "完了を隠す" : "完了を表示";
+
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
     renderDayDetail();
     return;
   }
+  const prevScroll = box.querySelector(".g-scroll");
+  const keepLeft = prevScroll ? prevScroll.scrollLeft : null;
+
   const days = [...Array(G_DAYS)].map((_, i) => addDays(gStart, i));
   const tk = todayKey();
   const trackW = G_DAYS * G_COLW;
-
   const colX = (i) => i * G_COLW;
+  const tdIdx = days.indexOf(tk);
+
   const weCols = days
     .map((dk, i) => {
       const wd = new Date(dk + "T00:00:00").getDay();
@@ -557,10 +606,9 @@ function renderGantt() {
         : "";
     })
     .join("");
-  const tdIdx = days.indexOf(tk);
   const todayLine = tdIdx >= 0 ? `<div class="g-today-line" style="left:${colX(tdIdx)}px"></div>` : "";
 
-  /* 日付ヘッダー行(絶対配置でマスと完全一致させる) */
+  /* 日付ヘッダー */
   const hcells = days
     .map((dk, i) => {
       const d = new Date(dk + "T00:00:00");
@@ -573,7 +621,6 @@ function renderGantt() {
     .join("");
 
   /* 見積合計行 */
-  const totals = days.map((dk) => dayItems(dk).reduce((s, x) => s + (x.estimateMin || 0), 0));
   const heat = (min) => {
     if (min <= 0) return "transparent";
     if (min <= 120) return "#EAF4F1";
@@ -583,120 +630,219 @@ function renderGantt() {
   };
   const sumCells = days
     .map((dk, i) => {
-      const m = totals[i];
+      const m = dayItems(dk).reduce((s, x) => s + (x.estimateMin || 0), 0);
       return `<button class="g-sum-cell" style="left:${colX(i) + 1}px;width:${G_COLW - 2}px;background:${heat(m)}"
         data-action="g-selday" data-date="${dk}">${m ? fmtH(m).replace("分", "m") : ""}</button>`;
     })
     .join("");
 
-  /* タスク行 */
-  const rows = [];
+  /* タスク行:左の名前列と右のトラックを同じ順序で組み立てる */
+  const sideRows = [];
+  const trackRows = [];
   const walk = (parentId, depth) => {
     state.tasks
       .filter((t) => (t.parentId || null) === parentId)
       .forEach((t) => {
-        const children = state.tasks.filter((c) => c.parentId === t.id);
-        const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
-        const prog = depth === 0 ? progressOf(t) : null;
-        const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
+        const hideThis = !showDone && t.type === "single" && t.done;
+        if (!hideThis) {
+          const children = state.tasks.filter((c) => c.parentId === t.id);
+          const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
+          const prog = depth === 0 ? progressOf(t) : null;
+          const p = t.type === "single" || t.type === "irregular" ? effPeriod(t) : { s: null, e: null };
 
-        let bar = "";
-        if (p.s && p.e && p.e >= days[0] && p.s <= days[days.length - 1]) {
-          const s = p.s < days[0] ? days[0] : p.s;
-          const e = p.e > days[days.length - 1] ? days[days.length - 1] : p.e;
-          const left = diffDays(s, days[0]) * G_COLW + 2;
-          const width = (diffDays(e, s) + 1) * G_COLW - 4;
-          bar = `<div class="g-bar ${children.length ? "parent" : ""}" style="left:${left}px;width:${width}px;background:${color}" title="${esc(t.title)} ${p.s}〜${p.e}"></div>`;
-        }
+          let bar = "";
+          if (p.s && p.e && p.e >= days[0] && p.s <= days[days.length - 1]) {
+            const s = p.s < days[0] ? days[0] : p.s;
+            const e = p.e > days[days.length - 1] ? days[days.length - 1] : p.e;
+            const left = diffDays(s, days[0]) * G_COLW + 2;
+            const width = (diffDays(e, s) + 1) * G_COLW - 4;
+            bar = `<div class="g-bar ${children.length ? "parent" : ""}" style="left:${left}px;width:${width}px;background:${color}" title="${esc(t.title)} ${p.s}〜${p.e}"></div>`;
+          }
 
-        const cells = days
-          .map((dk, i) => {
-            const real = state.assignments.find((a) => a.taskId === t.id && a.date === dk);
-            const virt =
-              !real &&
-              t.type === "recurring" &&
-              dk >= tk &&
-              occursOn(t, dk) &&
-              !hasSkip(t.id, dk);
-            let mark = "";
-            if (real) {
-              mark =
-                real.status === "done"
-                  ? `<span class="mark done-m">✓</span>`
-                  : `<span class="mark todo-m">●</span>`;
-            } else if (virt) {
-              mark = `<span class="mark virt-m">🔁</span>`;
-            }
-            return `<button class="g-cell" style="left:${colX(i)}px;width:${G_COLW}px"
-              data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
-          })
-          .join("");
+          const ruleRes = ruleReserveDates(t, days[0], days[days.length - 1]);
 
-        const rec = t.type === "recurring" ? "🔁 " : "";
-        rows.push(`
-          <div class="g-row">
-            <div class="g-label ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px">
+          const cells = days
+            .map((dk, i) => {
+              const real = state.assignments.find((a) => a.taskId === t.id && a.date === dk);
+              const manualRes = !real && findReserve(t.id, dk);
+              const virt =
+                !real &&
+                t.type === "recurring" &&
+                dk >= tk &&
+                occursOn(t, dk) &&
+                !hasSkip(t.id, dk);
+              const autoRes = !real && !virt && !manualRes && ruleRes.has(dk);
+              let mark = "";
+              let movable = "";
+              if (real) {
+                mark =
+                  real.status === "done"
+                    ? `<span class="mark done-m">✓</span>`
+                    : `<span class="mark todo-m">●</span>`;
+                if (t.type !== "recurring") movable = "has-mark";
+              } else if (manualRes) {
+                mark = `<span class="mark res-m">○</span>`;
+                movable = "has-mark";
+              } else if (virt) {
+                mark = `<span class="mark virt-m">🔁</span>`;
+              } else if (autoRes) {
+                mark = `<span class="mark ares-m">○</span>`;
+              }
+              return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
+                data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
+            })
+            .join("");
+
+          const rec = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
+          sideRows.push(`
+            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px">
               <span class="g-name">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
-            </div>
-            <div class="g-track" style="width:${trackW}px">${weCols}${todayLine}${bar}${cells}</div>
-          </div>`);
+            </div>`);
+          trackRows.push(`<div class="g-trow">${weCols}${todayLine}${bar}${cells}</div>`);
+        }
         walk(t.id, depth + 1);
       });
   };
   walk(null, 0);
 
   box.innerHTML = `
-    <div class="g-inner">
-      <div class="g-hrow">
-        <div class="g-label" style="font-weight:700;color:var(--muted);font-size:11px;">タスク</div>
-        <div class="g-track" style="width:${trackW}px;height:30px;">${hcells}</div>
+    <div class="g-wrap2">
+      <div class="g-side">
+        <div class="g-scell g-sh">タスク</div>
+        <div class="g-scell g-ss">見積合計</div>
+        ${sideRows.join("")}
       </div>
-      <div class="g-row">
-        <div class="g-label" style="font-size:11px;color:var(--muted);">見積合計</div>
-        <div class="g-track" style="width:${trackW}px;height:22px;">${sumCells}</div>
+      <div class="g-scroll">
+        <div style="width:${trackW}px">
+          <div class="g-trow g-sh">${hcells}</div>
+          <div class="g-trow g-ss">${sumCells}</div>
+          ${trackRows.join("")}
+        </div>
       </div>
-      ${rows.join("")}
     </div>`;
+
+  const sc = box.querySelector(".g-scroll");
+  if (sc) {
+    if (keepLeft !== null) sc.scrollLeft = keepLeft;
+    else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
+  }
   renderDayDetail();
 }
 
-/* マスのタップ:割り当てのオン/オフ */
+/* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
   const t = taskById(taskId);
   if (!t) return;
   const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
-  if (real) {
-    if ((real.status === "done" || real.spentSec > 5) &&
-        !confirm("実績が記録されています。この割り当てを取り消しますか?")) return;
-    state.assignments = state.assignments.filter((a) => a.id !== real.id);
-    if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk)) {
-      state.skips.push({ taskId, date: dk }); // 自動予定も出ないようにする
-    }
-  } else if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk)) {
-    if (hasSkip(taskId, dk)) {
-      state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === dk)); // 自動予定を復活
+
+  if (t.type === "recurring") {
+    if (real) {
+      if ((real.status === "done" || real.spentSec > 5) &&
+          !confirm("実績が記録されています。この割り当てを取り消しますか?")) return;
+      state.assignments = state.assignments.filter((a) => a.id !== real.id);
+      if (dk >= todayKey() && occursOn(t, dk)) state.skips.push({ taskId, date: dk });
+    } else if (dk >= todayKey() && occursOn(t, dk)) {
+      if (hasSkip(taskId, dk)) {
+        state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === dk));
+      } else {
+        state.skips.push({ taskId, date: dk });
+      }
     } else {
-      state.skips.push({ taskId, date: dk }); // 自動予定をオフ
+      state.assignments.push({
+        id: uid("a"), taskId, title: t.title, date: dk,
+        start: t.defStart || "09:00", estimateMin: t.estimateMin || 25,
+        status: "todo", spentSec: 0, startedAt: null,
+      });
     }
   } else {
-    state.assignments.push({
-      id: uid("a"),
-      taskId,
-      title: t.title,
-      date: dk,
-      start: t.defStart || "09:00",
-      estimateMin: t.estimateMin || 25,
-      status: "todo",
-      spentSec: 0,
-      startedAt: null,
-    });
+    const res = findReserve(taskId, dk);
+    if (real) {
+      if ((real.status === "done" || real.spentSec > 5) &&
+          !confirm("実績が記録されています。実施日を予備日に変えますか?")) return;
+      state.assignments = state.assignments.filter((a) => a.id !== real.id);
+      state.reserves.push({ id: uid("r"), taskId, date: dk }); // ● → ○
+    } else if (res) {
+      state.reserves = state.reserves.filter((r) => r.id !== res.id); // ○ → 空
+    } else {
+      state.assignments.push({
+        id: uid("a"), taskId, title: t.title, date: dk,
+        start: t.defStart || "09:00", estimateMin: t.estimateMin || 25,
+        status: "todo", spentSec: 0, startedAt: null,
+      }); // 空 → ●
+    }
   }
   save();
   renderGantt();
 }
 
-/* ---------- 日別詳細 ---------- */
+/* ---------- マークのドラッグ移動 ---------- */
+let drag = null;
+let suppressClick = false;
+
+document.addEventListener("pointerdown", (e) => {
+  if (view !== "gantt") return;
+  const cell = e.target.closest(".g-cell.has-mark");
+  if (!cell) return;
+  const taskId = cell.dataset.task;
+  const dk = cell.dataset.date;
+  const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
+  const res = real ? null : findReserve(taskId, dk);
+  if (!real && !res) return;
+  drag = {
+    kind: real ? "asg" : "res",
+    id: real ? real.id : res.id,
+    track: cell.parentElement,
+    fromIdx: diffDays(dk, gStart),
+    overIdx: null,
+    px: e.clientX,
+    moved: false,
+  };
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  if (!drag.moved && Math.abs(e.clientX - drag.px) > 8) drag.moved = true;
+  if (!drag.moved) return;
+  const rect = drag.track.getBoundingClientRect();
+  let idx = Math.floor((e.clientX - rect.left) / G_COLW);
+  idx = Math.max(0, Math.min(G_DAYS - 1, idx));
+  drag.overIdx = idx;
+  let ghost = drag.track.querySelector(".g-dropcol");
+  if (!ghost) {
+    ghost = document.createElement("div");
+    ghost.className = "g-dropcol";
+    drag.track.appendChild(ghost);
+  }
+  ghost.style.left = `${idx * G_COLW}px`;
+  ghost.style.width = `${G_COLW}px`;
+});
+
+document.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  const ghost = d.track.querySelector(".g-dropcol");
+  if (ghost) ghost.remove();
+  if (d.moved) {
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+    if (d.overIdx !== null && d.overIdx !== d.fromIdx) {
+      const nd = addDays(gStart, d.overIdx);
+      if (d.kind === "asg") {
+        const a = state.assignments.find((x) => x.id === d.id);
+        if (a) a.date = nd;
+      } else {
+        const r = state.reserves.find((x) => x.id === d.id);
+        if (r) r.date = nd;
+      }
+      save();
+      renderGantt();
+    }
+  }
+});
+
+/* ---------- 日別詳細 ---------- *//* ---------- 日別詳細 ---------- */
 function renderDayDetail() {
   const box = document.getElementById("day-detail");
   const d = new Date(selDate + "T00:00:00");
@@ -729,12 +875,29 @@ function renderDayDetail() {
         .join("")
     : `<div class="plan-empty">この日の割り当てはまだありません。上のマスをタップするか「+ 割り当て」から追加できます。</div>`;
 
+  /* この日の予備日(手動+周期ルール) */
+  const resRows = [];
+  state.reserves
+    .filter((r) => r.date === selDate)
+    .forEach((r) => {
+      const t = taskById(r.taskId);
+      if (t) resRows.push(`<div class="p-row"><div class="p-main"><div class="p-title">○ ${esc(t.title)}</div><div class="p-sub">予備日</div></div></div>`);
+    });
+  state.tasks
+    .filter((t) => t.type === "recurring" && t.reserveRule)
+    .forEach((t) => {
+      if (ruleReserveDates(t, selDate, selDate).has(selDate)) {
+        resRows.push(`<div class="p-row"><div class="p-main"><div class="p-title">○ ${esc(t.title)}</div><div class="p-sub">予備日(自動)</div></div></div>`);
+      }
+    });
+
   box.innerHTML = `
     <div class="plan-head">
       <h2 class="section-label">${d.getMonth() + 1}月${d.getDate()}日(${youbi}) 合計 ${fmtH(total)}</h2>
       <button class="sbtn" data-action="asg-add">+ 割り当て</button>
     </div>
-    ${rows}`;
+    ${rows}
+    ${resRows.join("")}`;
 }
 
 /* ---------- 割り当てフォーム ---------- */
@@ -887,10 +1050,11 @@ function renderPlan() {
       ? `<span class="goal-chip" style="background:${issueColor(issue.id)}22;color:${issueColor(issue.id)}">${esc(issue.title)}</span>`
       : "";
     const children = state.tasks.filter((c) => c.parentId === t.id);
+    const marks = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
     const row = `
       <div class="p-row" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
         <div class="p-main">
-          <div class="p-title ${t.done ? "done-task" : ""}">${chip}${esc(t.title)}</div>
+          <div class="p-title ${t.done ? "done-task" : ""}">${chip}${marks}${esc(t.title)}</div>
           <div class="p-sub">${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件` : ""}</div>
         </div>
         <div class="p-actions">
@@ -1009,6 +1173,9 @@ function updateRecVisibility() {
   document.getElementById("rec-weekly").classList.toggle("hidden", kind !== "weekly");
   document.getElementById("rec-monthly").classList.toggle("hidden", kind !== "monthly");
   document.getElementById("rec-yearly").classList.toggle("hidden", kind !== "yearly");
+  const rs = document.getElementById("t-rsmode").value;
+  document.getElementById("rs-n").classList.toggle("hidden", rs !== "after" && rs !== "before");
+  document.getElementById("rs-wd").classList.toggle("hidden", rs !== "weekday");
 }
 
 function openTaskForm(task, parentId) {
@@ -1024,6 +1191,10 @@ function openTaskForm(task, parentId) {
   document.getElementById("t-pstart").value = task ? task.planStart || "" : "";
   document.getElementById("t-pend").value = task ? task.planEnd || "" : "";
   document.getElementById("t-anchor").value = todayKey();
+  const rr = task && task.reserveRule;
+  document.getElementById("t-rsmode").value = rr ? rr.mode : "";
+  document.getElementById("t-rsn").value = rr && rr.n ? rr.n : 1;
+  document.getElementById("t-rswd").value = rr && rr.weekday !== undefined ? rr.weekday : 6;
   const r = task && task.recurrence;
   if (r) {
     document.getElementById("t-rkind").value = r.kind;
@@ -1075,6 +1246,15 @@ function readRecurrence() {
   };
 }
 
+function readReserveRule() {
+  const mode = document.getElementById("t-rsmode").value;
+  if (!mode) return null;
+  if (mode === "weekday") {
+    return { mode, weekday: Number(document.getElementById("t-rswd").value) || 0 };
+  }
+  return { mode, n: Math.max(1, Number(document.getElementById("t-rsn").value) || 1) };
+}
+
 function saveTaskForm() {
   const title = document.getElementById("t-title").value.trim();
   if (!title) return;
@@ -1092,6 +1272,7 @@ function saveTaskForm() {
     planStart: type === "recurring" ? null : ps,
     planEnd: type === "recurring" ? null : pe,
     recurrence: type === "recurring" ? readRecurrence() : null,
+    reserveRule: type === "recurring" ? readReserveRule() : null,
   };
   if (editingTaskId) {
     Object.assign(taskById(editingTaskId), data);
@@ -1349,7 +1530,11 @@ document.addEventListener("click", (e) => {
     editingAsgId = null;
     renderGantt();
   } else if (action === "g-cell") {
-    toggleCell(btn.dataset.task, btn.dataset.date);
+    if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
+  } else if (action === "g-toggledone") {
+    showDone = !showDone;
+    localStorage.setItem("hisho:ui:showdone", showDone ? "1" : "0");
+    renderGantt();
   } else if (action === "asg-add") {
     openAsgForm(selDate, null);
   } else if (action === "asg-edit") {
@@ -1443,7 +1628,7 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", (e) => {
-  if (e.target.id === "t-type" || e.target.id === "t-rkind") updateRecVisibility();
+  if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
   if (e.target.id === "a-task") {
     updateAsgTitleVisibility();
     const t = e.target.value ? taskById(e.target.value) : null;
