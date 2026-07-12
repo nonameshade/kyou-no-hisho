@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>きょうの秘書</title>
+  <meta name="description" content="今日やるべき作業を教えてくれる、あなた専用の秘書アプリ">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#EDF0F3">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="きょうの秘書">
+  <link rel="apple-touch-icon" href="./icon-180.png">
+  <link rel="icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="wrap">
+
+    <header class="topbar">
+      <div>
+        <div class="app-label">きょうの秘書</div>
+        <div class="date" id="date-label"></div>
+      </div>
+      <div class="stats" id="stats"></div>
+    </header>
+
+    <section id="hero"></section>
+
+    <h2 class="section-label">きょうのタイムライン</h2>
+    <div id="timeline"></div>
+
+    <section id="add-form" class="add-form hidden">
+      <div class="form-title">タスクを追加</div>
+      <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
+      <div class="form-row">
+        <label>開始時刻
+          <input type="time" id="f-start">
+        </label>
+        <label>見積(分)
+          <input type="number" id="f-est" min="1" max="600" value="25">
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn solid" data-action="add-confirm">追加する</button>
+        <button class="btn" data-action="add-cancel">やめる</button>
+      </div>
+    </section>
+
+    <button id="fab" data-action="add-open">+ タスクを追加</button>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
