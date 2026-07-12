@@ -361,6 +361,7 @@ function switchView(v) {
   );
   document.getElementById("view-today").classList.toggle("hidden", v !== "today");
   document.getElementById("view-cal").classList.toggle("hidden", v !== "cal");
+  document.getElementById("view-gantt").classList.toggle("hidden", v !== "gantt");
   document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
   renderAll();
 }
@@ -489,6 +490,7 @@ function renderPlan() {
     return;
   }
   const renderNode = (t, depth) => {
+    const prog = depth === 0 ? progressOf(t) : null;
     const goal = t.goalId ? goalById(t.goalId) : null;
     const chip = goal
       ? `<span class="goal-chip" style="background:${goalColor(goal.id)}22;color:${goalColor(goal.id)}">${esc(goal.title)}</span>`
@@ -498,7 +500,7 @@ function renderPlan() {
       <div class="p-row" style="margin-left:${depth * 18}px;border-left-color:${goal ? goalColor(goal.id) : "transparent"}">
         <div class="p-main">
           <div class="p-title ${t.done ? "done-task" : ""}">${chip}${esc(t.title)}</div>
-          <div class="p-sub">${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件` : ""}</div>
+          <div class="p-sub">${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件` : ""}</div>
         </div>
         <div class="p-actions">
           <button class="sbtn" data-action="assign-today" data-id="${t.id}">今日へ</button>
@@ -522,6 +524,8 @@ function renderAll() {
     renderTimeline();
   } else if (view === "cal") {
     renderCal();
+  } else if (view === "gantt") {
+    renderGantt();
   } else {
     renderPlan();
   }
@@ -556,6 +560,7 @@ function fillParentGoalSelects(excludeId) {
 function updateRecVisibility() {
   const type = document.getElementById("t-type").value;
   document.getElementById("rec-block").classList.toggle("hidden", type !== "recurring");
+  document.getElementById("period-block").classList.toggle("hidden", type === "recurring");
   const kind = document.getElementById("t-rkind").value;
   document.getElementById("rec-ndays").classList.toggle("hidden", kind !== "everyNDays");
   document.getElementById("rec-weekly").classList.toggle("hidden", kind !== "weekly");
@@ -574,6 +579,8 @@ function openTaskForm(task, parentId) {
   document.getElementById("t-type").value = task ? task.type : "single";
   document.getElementById("t-est").value = task ? task.estimateMin : 25;
   document.getElementById("t-defstart").value = task ? task.defStart || "09:00" : "09:00";
+  document.getElementById("t-pstart").value = task ? task.planStart || "" : "";
+  document.getElementById("t-pend").value = task ? task.planEnd || "" : "";
   document.getElementById("t-anchor").value = todayKey();
   const r = task && task.recurrence;
   if (r) {
@@ -639,6 +646,11 @@ function saveTaskForm() {
     defStart: document.getElementById("t-defstart").value || "09:00",
     recurrence: type === "recurring" ? readRecurrence() : null,
   };
+  let ps = document.getElementById("t-pstart").value || null;
+  let pe = document.getElementById("t-pend").value || null;
+  if (ps && pe && pe < ps) { const tmp = ps; ps = pe; pe = tmp; }
+  data.planStart = ps;
+  data.planEnd = pe;
   if (editingTaskId) {
     const t = taskById(editingTaskId);
     Object.assign(t, data);
@@ -860,6 +872,112 @@ function fixVirtual(taskId, dk) {
 }
 
 
+/* ---------- ガント(フェーズ3c) ---------- */
+const G_DAYS = 42;
+const G_COLW = 26;
+const addDays = (dk, n) => {
+  const d = new Date(dk + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return dkOf(d.getFullYear(), d.getMonth(), d.getDate());
+};
+const diffDays = (a, b) =>
+  Math.round((new Date(a + "T00:00:00") - new Date(b + "T00:00:00")) / 86400000);
+let gStart = addDays(todayKey(), -7);
+
+/* タスクの有効期間:自身の設定がなければ子の期間から自動算出 */
+function effPeriod(t) {
+  let s = t.planStart || null;
+  let e = t.planEnd || null;
+  state.tasks
+    .filter((c) => c.parentId === t.id)
+    .forEach((c) => {
+      const p = effPeriod(c);
+      if (p.s && (!s || p.s < s)) s = p.s;
+      if (p.e && (!e || p.e > e)) e = p.e;
+    });
+  if (s && !e) e = s;
+  if (e && !s) s = e;
+  return { s, e };
+}
+
+/* 進捗率:配下(自身含む)の単発タスクの見積時間ベース */
+function progressOf(t) {
+  const ids = descendants(t.id);
+  ids.add(t.id);
+  const singles = state.tasks.filter((x) => ids.has(x.id) && x.type === "single");
+  const total = singles.reduce((s, x) => s + (x.estimateMin || 0), 0);
+  if (!total) return null;
+  const done = singles.filter((x) => x.done).reduce((s, x) => s + (x.estimateMin || 0), 0);
+  return Math.round((done / total) * 100);
+}
+
+function renderGantt() {
+  const box = document.getElementById("gantt");
+  if (!state.tasks.length) {
+    box.innerHTML = `<div class="g-empty">計画タブでタスクを登録し、編集画面で「予定開始日・終了日」を設定すると、ここにバーが表示されます。</div>`;
+    return;
+  }
+  const days = [...Array(G_DAYS)].map((_, i) => addDays(gStart, i));
+  const tk = todayKey();
+  const tdIdx = days.indexOf(tk);
+
+  const hcells = days
+    .map((dk, i) => {
+      const d = new Date(dk + "T00:00:00");
+      const wd = d.getDay();
+      const mon = d.getDate() === 1 || i === 0 ? `<span class="g-mon">${d.getMonth() + 1}月</span>` : `<span class="g-mon">&nbsp;</span>`;
+      return `<div class="g-hcell ${wd === 0 || wd === 6 ? "we" : ""} ${dk === tk ? "td" : ""}">${mon}<span>${d.getDate()}</span></div>`;
+    })
+    .join("");
+
+  const rows = [];
+  const walk = (parentId, depth) => {
+    state.tasks
+      .filter((t) => (t.parentId || null) === parentId)
+      .forEach((t) => {
+        const children = state.tasks.filter((c) => c.parentId === t.id);
+        const goal = t.goalId ? goalById(t.goalId) : null;
+        const color = goal ? goalColor(goal.id) : "#0E7C66";
+        const prog = depth === 0 ? progressOf(t) : null;
+        const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
+
+        let bar = "";
+        if (p.s && p.e) {
+          const s = p.s < days[0] ? days[0] : p.s;
+          const e = p.e > days[days.length - 1] ? days[days.length - 1] : p.e;
+          if (s <= e && p.e >= days[0] && p.s <= days[days.length - 1]) {
+            const left = diffDays(s, days[0]) * G_COLW + 2;
+            const width = (diffDays(e, s) + 1) * G_COLW - 4;
+            const doneBar = t.type === "single" && t.done ? "done-bar" : "";
+            bar = `<div class="g-bar ${children.length ? "parent" : ""} ${doneBar}" style="left:${left}px;width:${width}px;background:${color}" title="${esc(t.title)} ${p.s}〜${p.e}"></div>`;
+          }
+        }
+        const todayLine = tdIdx >= 0 ? `<div class="g-today-line" style="left:${tdIdx * G_COLW}px"></div>` : "";
+        const rec = t.type === "recurring" ? "🔁 " : "";
+        rows.push(`
+          <div class="g-row">
+            <div class="g-label ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px">
+              <span class="g-name">${rec}${esc(t.title)}</span>
+              ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
+            </div>
+            <div class="g-track" style="width:${G_DAYS * G_COLW}px">${todayLine}${bar}</div>
+          </div>`);
+        walk(t.id, depth + 1);
+      });
+  };
+  walk(null, 0);
+
+  box.innerHTML = `
+    <div class="g-inner">
+      <div class="g-hrow">
+        <div class="g-label" style="font-weight:700;color:var(--muted);font-size:11px;">タスク</div>
+        <div style="display:flex;">${hcells}</div>
+      </div>
+      ${rows.join("")}
+    </div>`;
+}
+
+
 /* ---------- スプレッドシート同期 ---------- */
 const SYNC_URL_KEY = "hisho:sync:url";
 const SYNC_TOKEN_KEY = "hisho:sync:token";
@@ -913,6 +1031,9 @@ function syncPayload() {
         kind: recurrenceLabel(t),
         estimateMin: t.estimateMin,
         defStart: t.defStart || "",
+        pstart: t.planStart || "",
+        pend: t.planEnd || "",
+        progress: (() => { const p = progressOf(t); return p === null ? "" : p; })(),
         done: t.type === "single" ? (t.done ? "完了" : "未完了") : "",
       };
     }),
@@ -1060,6 +1181,11 @@ document.addEventListener("click", (e) => {
   } else if (action === "asg-fix") {
     fixVirtual(btn.dataset.task, btn.dataset.date);
   }
+
+  /* ガント */
+  else if (action === "g-prev") { gStart = addDays(gStart, -14); renderGantt(); }
+  else if (action === "g-next") { gStart = addDays(gStart, 14); renderGantt(); }
+  else if (action === "g-today") { gStart = addDays(todayKey(), -7); renderGantt(); }
 
   /* 目標 */
   else if (action === "goal-add") {

@@ -380,3 +380,84 @@ body[data-view="cal"] #fab { display: none; }
   border-radius: 999px;
   padding: 1px 8px;
 }
+
+/* ---------- ガント(フェーズ3c) ---------- */
+body[data-view="gantt"] .wrap { max-width: 980px; }
+body[data-view="gantt"] #fab { display: none; }
+
+#gantt {
+  overflow-x: auto;
+  background: var(--surface);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  -webkit-overflow-scrolling: touch;
+}
+.g-inner { display: inline-block; min-width: 100%; }
+.g-row { display: flex; border-top: 1px solid #EEF1F4; }
+.g-hrow { display: flex; border-top: none; }
+.g-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 170px;
+  min-width: 170px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: 8px 8px 8px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.g-label .g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-label.done-task .g-name { text-decoration: line-through; color: var(--done); }
+.g-prog {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+.g-track { position: relative; height: 34px; flex-shrink: 0; }
+.g-hcell {
+  width: 26px;
+  min-width: 26px;
+  text-align: center;
+  font-size: 9.5px;
+  color: var(--muted);
+  padding: 4px 0 3px;
+  position: relative;
+}
+.g-hcell.we { background: #F3F5F8; }
+.g-hcell.td { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.g-mon {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  text-align: left;
+  padding-left: 2px;
+}
+.g-bar {
+  position: absolute;
+  top: 7px;
+  height: 20px;
+  border-radius: 6px;
+  opacity: .9;
+}
+.g-bar.parent { top: 12px; height: 9px; border-radius: 5px; }
+.g-bar.done-bar { opacity: .35; }
+.g-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 26px;
+  background: var(--accent-soft);
+  opacity: .55;
+}
+.g-empty { padding: 20px 14px; font-size: 12.5px; color: var(--muted); line-height: 1.8; }

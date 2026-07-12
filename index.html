@@ -31,6 +31,7 @@
     <nav class="tabs">
       <button class="tab active" data-action="tab" data-tab="today">きょう</button>
       <button class="tab" data-action="tab" data-tab="cal">カレンダー</button>
+      <button class="tab" data-action="tab" data-tab="gantt">ガント</button>
       <button class="tab" data-action="tab" data-tab="plan">計画</button>
     </nav>
 
@@ -119,6 +120,17 @@
       </section>
     </div>
 
+    <!-- ============ ガント ============ -->
+    <div id="view-gantt" class="hidden">
+      <div class="cal-nav">
+        <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
+        <button class="sbtn" data-action="g-today">今日へ</button>
+        <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
+      </div>
+      <div id="gantt"></div>
+      <div class="t-sub" style="margin:8px 2px 18px;">バーはタスクの予定期間(計画タブで設定)。親タスクの期間は子から自動で決まります。%は見積時間ベースの進捗率です。</div>
+    </div>
+
     <!-- ============ 計画 ============ -->
     <div id="view-plan" class="hidden">
 
@@ -168,6 +180,15 @@
           </label>
           <label>既定の開始時刻
             <input type="time" id="t-defstart" value="09:00">
+          </label>
+        </div>
+
+        <div id="period-block" class="form-row">
+          <label>予定開始日(ガント用)
+            <input type="date" id="t-pstart">
+          </label>
+          <label>予定終了日
+            <input type="date" id="t-pend">
           </label>
         </div>
 
