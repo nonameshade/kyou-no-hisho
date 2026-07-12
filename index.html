@@ -28,8 +28,13 @@
       </div>
     </header>
 
+    <nav class="tabs">
+      <button class="tab active" data-action="tab" data-tab="today">きょう</button>
+      <button class="tab" data-action="tab" data-tab="plan">計画</button>
+    </nav>
+
     <section id="settings" class="add-form hidden">
-      <div class="form-title">スプレッドシート同期の設定</div>
+      <div class="form-title">設定</div>
       <label class="f-label">Apps Script のURL
         <input type="url" id="s-url" placeholder="https://script.google.com/macros/s/…/exec">
       </label>
@@ -39,32 +44,141 @@
       <div class="btn-row">
         <button class="btn solid" data-action="settings-save">保存する</button>
         <button class="btn" data-action="sync-now">今すぐ同期</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn" data-action="force-update">最新版に更新</button>
         <button class="btn" data-action="settings-close">閉じる</button>
       </div>
       <div class="t-sub" id="settings-msg" style="margin-top:10px;"></div>
     </section>
 
-    <section id="hero"></section>
+    <!-- ============ きょう ============ -->
+    <div id="view-today">
+      <section id="hero"></section>
+      <h2 class="section-label">きょうのタイムライン</h2>
+      <div id="timeline"></div>
 
-    <h2 class="section-label">きょうのタイムライン</h2>
-    <div id="timeline"></div>
+      <section id="add-form" class="add-form hidden">
+        <div class="form-title">きょうのタスクを追加</div>
+        <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
+        <div class="form-row">
+          <label>開始時刻
+            <input type="time" id="f-start">
+          </label>
+          <label>見積(分)
+            <input type="number" id="f-est" min="1" max="600" value="25">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn solid" data-action="add-confirm">追加する</button>
+          <button class="btn" data-action="add-cancel">やめる</button>
+        </div>
+      </section>
+    </div>
 
-    <section id="add-form" class="add-form hidden">
-      <div class="form-title">タスクを追加</div>
-      <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
-      <div class="form-row">
-        <label>開始時刻
-          <input type="time" id="f-start">
-        </label>
-        <label>見積(分)
-          <input type="number" id="f-est" min="1" max="600" value="25">
-        </label>
-      </div>
-      <div class="btn-row">
-        <button class="btn solid" data-action="add-confirm">追加する</button>
-        <button class="btn" data-action="add-cancel">やめる</button>
-      </div>
-    </section>
+    <!-- ============ 計画 ============ -->
+    <div id="view-plan" class="hidden">
+
+      <section class="plan-block">
+        <div class="plan-head">
+          <h2 class="section-label">長期目標</h2>
+          <button class="sbtn" data-action="goal-add">+ 目標を追加</button>
+        </div>
+        <div id="goal-list"></div>
+        <div id="goal-form" class="add-form hidden">
+          <input type="text" id="g-title" placeholder="目標名(例: 資格試験に合格する)" maxlength="60">
+          <div class="btn-row">
+            <button class="btn solid" data-action="goal-save">保存する</button>
+            <button class="btn" data-action="goal-cancel">やめる</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="plan-block">
+        <div class="plan-head">
+          <h2 class="section-label">タスク(階層)</h2>
+          <button class="sbtn" data-action="task-add">+ タスクを追加</button>
+        </div>
+        <div id="task-tree"></div>
+      </section>
+
+      <section id="task-form" class="add-form hidden">
+        <div class="form-title" id="task-form-title">タスクを追加</div>
+        <input type="text" id="t-title" placeholder="タスク名" maxlength="80">
+        <div class="form-row">
+          <label>親タスク
+            <select id="t-parent"></select>
+          </label>
+          <label>関連する目標
+            <select id="t-goal"></select>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>種類
+            <select id="t-type">
+              <option value="single">1回限り</option>
+              <option value="recurring">周期的</option>
+            </select>
+          </label>
+          <label>見積(分)
+            <input type="number" id="t-est" min="1" max="600" value="25">
+          </label>
+          <label>既定の開始時刻
+            <input type="time" id="t-defstart" value="09:00">
+          </label>
+        </div>
+
+        <div id="rec-block" class="hidden">
+          <label class="f-label">周期のパターン
+            <select id="t-rkind">
+              <option value="everyNDays">何日ごと</option>
+              <option value="weekly">毎週◯曜日</option>
+              <option value="monthly">毎月◯日</option>
+              <option value="yearly">毎年◯月◯日</option>
+            </select>
+          </label>
+          <div id="rec-ndays" class="form-row">
+            <label>間隔(日)
+              <input type="number" id="t-rn" min="1" max="365" value="3">
+            </label>
+            <label>起点日
+              <input type="date" id="t-anchor">
+            </label>
+          </div>
+          <div id="rec-weekly" class="weekday-row hidden">
+            <label><input type="checkbox" value="0">日</label>
+            <label><input type="checkbox" value="1">月</label>
+            <label><input type="checkbox" value="2">火</label>
+            <label><input type="checkbox" value="3">水</label>
+            <label><input type="checkbox" value="4">木</label>
+            <label><input type="checkbox" value="5">金</label>
+            <label><input type="checkbox" value="6">土</label>
+          </div>
+          <div id="rec-monthly" class="form-row hidden">
+            <label>毎月の日付
+              <input type="number" id="t-rday" min="1" max="31" value="1">
+            </label>
+          </div>
+          <div id="rec-yearly" class="form-row hidden">
+            <label>月
+              <input type="number" id="t-rmonth" min="1" max="12" value="1">
+            </label>
+            <label>日
+              <input type="number" id="t-rmday" min="1" max="31" value="1">
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn solid" data-action="task-save">保存する</button>
+          <button class="btn" data-action="task-cancel">やめる</button>
+        </div>
+        <div class="btn-row hidden" id="task-delete-row">
+          <button class="btn danger" data-action="task-delete">このタスクを削除</button>
+        </div>
+      </section>
+
+    </div>
 
     <button id="fab" data-action="add-open">+ タスクを追加</button>
   </div>

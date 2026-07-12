@@ -1,7 +1,12 @@
 /* ============================================================
-   きょうの秘書 — app.js
-   データは localStorage に保存。将来 Google Sheets 同期を追加する
-   前提で、タスクに date フィールドを持たせています。
+   きょうの秘書 — app.js(フェーズ3a)
+   データ構造:
+     goals:       長期目標 [{id, title}]
+     tasks:       タスクの原本 [{id, title, parentId, goalId, type,
+                   estimateMin, defStart, recurrence, done, createdDate}]
+     assignments: 日々への割り当て(きょう画面の実体)
+                  [{id, taskId, title, date, start, estimateMin,
+                    status, spentSec, startedAt}]
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
@@ -12,8 +17,8 @@ const todayKey = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const hmToMin = (hm) => {
-  const [h, m] = hm.split(":").map(Number);
-  return h * 60 + m;
+  const [h, m] = String(hm).split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
 };
 const nowMin = () => {
   const d = new Date();
@@ -32,13 +37,19 @@ const fmtDur = (sec) => {
 };
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+const GOAL_COLORS = ["#0E7C66", "#3D5A9E", "#B0692B", "#8A4E9E", "#3F7A3F", "#A8455C"];
 
 /* ---------- 状態 ---------- */
-let state = { tasks: [] };
+let state = { v: 2, goals: [], tasks: [], assignments: [] };
 let wakeLock = null;
 let lastBeep = 0;
 let renderedCurrentId = null;
 let renderedOverrun = false;
+let view = "today";
+let editingTaskId = null;
+let addChildOf = null;
 
 function load() {
   try {
@@ -47,8 +58,36 @@ function load() {
   } catch (e) {
     console.error("読み込みに失敗しました", e);
   }
-  if (!state || !Array.isArray(state.tasks)) state = { tasks: [] };
+  if (!state || typeof state !== "object") state = { v: 2, goals: [], tasks: [], assignments: [] };
+  migrate();
 }
+
+/* 旧形式(フェーズ1-2: tasksが日々のタスクだった)からの移行 */
+function migrate() {
+  if (!state.v || state.v < 2) {
+    const old = Array.isArray(state.tasks) ? state.tasks : [];
+    state = {
+      v: 2,
+      goals: [],
+      tasks: [],
+      assignments: old.map((t) => ({
+        id: "a_" + (t.id || uid("m")),
+        taskId: null,
+        title: t.title || "",
+        date: t.date || todayKey(),
+        start: t.start || "09:00",
+        estimateMin: t.estimateMin || 25,
+        status: t.status || "todo",
+        spentSec: t.spentSec || 0,
+        startedAt: t.startedAt || null,
+      })),
+    };
+  }
+  if (!Array.isArray(state.goals)) state.goals = [];
+  if (!Array.isArray(state.tasks)) state.tasks = [];
+  if (!Array.isArray(state.assignments)) state.assignments = [];
+}
+
 function save() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -59,7 +98,554 @@ function save() {
   scheduleSync();
 }
 
-/* ---------- スプレッドシート同期(フェーズ2) ---------- */
+/* ---------- 参照ヘルパー ---------- */
+const taskById = (id) => state.tasks.find((t) => t.id === id) || null;
+const goalById = (id) => state.goals.find((g) => g.id === id) || null;
+const goalColor = (id) => {
+  const i = state.goals.findIndex((g) => g.id === id);
+  return i >= 0 ? GOAL_COLORS[i % GOAL_COLORS.length] : "transparent";
+};
+const asgTitle = (a) => {
+  const t = a.taskId ? taskById(a.taskId) : null;
+  return t ? t.title : a.title;
+};
+
+const todays = () =>
+  state.assignments
+    .filter((a) => a.date === todayKey())
+    .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
+
+const runningAsg = () => todays().find((a) => a.status === "doing") || null;
+
+const elapsedSec = (a) =>
+  a.spentSec + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0);
+
+const isOver = (a) => elapsedSec(a) > a.estimateMin * 60;
+
+/* 秘書ロジック:いま取り組むべきもの */
+function currentAsg() {
+  const list = todays();
+  return (
+    runningAsg() ||
+    list.filter((a) => a.status !== "done" && hmToMin(a.start) <= nowMin()).pop() ||
+    list.find((a) => a.status !== "done") ||
+    null
+  );
+}
+
+/* ---------- 周期タスクの判定と自動展開 ---------- */
+function occursOn(task, dateKey) {
+  const r = task.recurrence;
+  if (!r) return false;
+  const d = new Date(dateKey + "T00:00:00");
+  if (r.kind === "everyNDays") {
+    const anchor = new Date((r.anchor || task.createdDate || dateKey) + "T00:00:00");
+    const diff = Math.round((d - anchor) / 86400000);
+    return diff >= 0 && r.n > 0 && diff % r.n === 0;
+  }
+  if (r.kind === "weekly") return Array.isArray(r.weekdays) && r.weekdays.includes(d.getDay());
+  if (r.kind === "monthly") return d.getDate() === r.day;
+  if (r.kind === "yearly") return d.getMonth() + 1 === r.month && d.getDate() === r.day;
+  return false;
+}
+
+function recurrenceLabel(task) {
+  const r = task.recurrence;
+  if (!r) return "1回限り";
+  const W = "日月火水木金土";
+  if (r.kind === "everyNDays") return `${r.n}日ごと`;
+  if (r.kind === "weekly") return `毎週${(r.weekdays || []).map((d) => W[d]).join("・")}曜`;
+  if (r.kind === "monthly") return `毎月${r.day}日`;
+  if (r.kind === "yearly") return `毎年${r.month}月${r.day}日`;
+  return "周期";
+}
+
+/* 今日が該当日の周期タスクを、きょうのタイムラインへ自動追加 */
+function materializeToday() {
+  const dk = todayKey();
+  let changed = false;
+  state.tasks
+    .filter((t) => t.type === "recurring" && occursOn(t, dk))
+    .forEach((t) => {
+      const exists = state.assignments.some((a) => a.taskId === t.id && a.date === dk);
+      if (!exists) {
+        state.assignments.push({
+          id: uid("a"),
+          taskId: t.id,
+          title: t.title,
+          date: dk,
+          start: t.defStart || "09:00",
+          estimateMin: t.estimateMin || 25,
+          status: "todo",
+          spentSec: 0,
+          startedAt: null,
+        });
+        changed = true;
+      }
+    });
+  if (changed) save();
+}
+
+/* ---------- アラート ---------- */
+function beep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const play = (t, freq) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.35);
+      o.connect(g).connect(ctx.destination);
+      o.start(ctx.currentTime + t);
+      o.stop(ctx.currentTime + t + 0.4);
+    };
+    play(0, 880);
+    play(0.45, 880);
+    play(0.9, 1175);
+  } catch (e) {}
+  try {
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+  } catch (e) {}
+}
+
+function notify(title, body) {
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(title, { body });
+    }
+  } catch (e) {}
+}
+
+/* ---------- きょう:操作 ---------- */
+async function startAsg(id) {
+  try {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  } catch (e) {}
+  try {
+    if (navigator.wakeLock && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch (e) {}
+  lastBeep = 0;
+  state.assignments = state.assignments.map((a) => {
+    if (a.id === id) return { ...a, status: "doing", startedAt: Date.now() };
+    if (a.status === "doing") return { ...a, status: "todo", spentSec: elapsedSec(a), startedAt: null };
+    return a;
+  });
+  save();
+  renderAll();
+}
+
+function pauseAsg(id) {
+  state.assignments = state.assignments.map((a) =>
+    a.id === id ? { ...a, status: "todo", spentSec: elapsedSec(a), startedAt: null } : a
+  );
+  releaseWake();
+  save();
+  renderAll();
+}
+
+function finishAsg(id) {
+  state.assignments = state.assignments.map((a) =>
+    a.id === id ? { ...a, status: "done", spentSec: elapsedSec(a), startedAt: null } : a
+  );
+  const a = state.assignments.find((x) => x.id === id);
+  if (a && a.taskId) {
+    const t = taskById(a.taskId);
+    if (t && t.type === "single") t.done = true; // 単発タスクは完了扱いに
+  }
+  releaseWake();
+  save();
+  renderAll();
+}
+
+function removeAsg(id) {
+  state.assignments = state.assignments.filter((a) => a.id !== id);
+  save();
+  renderAll();
+}
+
+function releaseWake() {
+  if (wakeLock && !runningAsg()) {
+    try { wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+}
+
+function addAdhoc(title, start, estimateMin) {
+  state.assignments.push({
+    id: uid("a"),
+    taskId: null,
+    title: title.trim(),
+    date: todayKey(),
+    start,
+    estimateMin: Math.max(1, Number(estimateMin) || 25),
+    status: "todo",
+    spentSec: 0,
+    startedAt: null,
+  });
+  save();
+  renderAll();
+}
+
+function assignTaskToToday(taskId) {
+  const t = taskById(taskId);
+  if (!t) return;
+  state.assignments.push({
+    id: uid("a"),
+    taskId: t.id,
+    title: t.title,
+    date: todayKey(),
+    start: t.defStart || nowHM(),
+    estimateMin: t.estimateMin || 25,
+    status: "todo",
+    spentSec: 0,
+    startedAt: null,
+  });
+  save();
+  switchView("today");
+}
+
+/* ---------- 計画:目標 ---------- */
+function saveGoal(title) {
+  state.goals.push({ id: uid("g"), title: title.trim() });
+  save();
+  renderPlan();
+}
+function removeGoal(id) {
+  state.goals = state.goals.filter((g) => g.id !== id);
+  state.tasks.forEach((t) => { if (t.goalId === id) t.goalId = null; });
+  save();
+  renderPlan();
+}
+
+/* ---------- 計画:タスク ---------- */
+function descendants(id, acc) {
+  acc = acc || new Set();
+  state.tasks.filter((t) => t.parentId === id).forEach((c) => {
+    acc.add(c.id);
+    descendants(c.id, acc);
+  });
+  return acc;
+}
+
+function removeTaskDef(id) {
+  const t = taskById(id);
+  if (!t) return;
+  // 子タスクは1段上へ引き継ぐ
+  state.tasks.forEach((c) => { if (c.parentId === id) c.parentId = t.parentId || null; });
+  state.tasks = state.tasks.filter((x) => x.id !== id);
+  // 未完了の割り当ては残すが、原本の名前を写しておく
+  state.assignments.forEach((a) => { if (a.taskId === id) { a.title = t.title; a.taskId = null; } });
+  save();
+  renderPlan();
+}
+
+/* ---------- 画面切替 ---------- */
+function switchView(v) {
+  view = v;
+  document.body.dataset.view = v;
+  document.querySelectorAll(".tab").forEach((el) =>
+    el.classList.toggle("active", el.dataset.tab === v)
+  );
+  document.getElementById("view-today").classList.toggle("hidden", v !== "today");
+  document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
+  renderAll();
+}
+
+/* ---------- 描画:きょう ---------- */
+function renderHeader() {
+  const d = new Date();
+  const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+  document.getElementById("date-label").textContent = `${d.getMonth() + 1}月${d.getDate()}日(${youbi})`;
+  const list = todays();
+  const rest = list.filter((a) => a.status !== "done").reduce((s, a) => s + a.estimateMin, 0);
+  const done = list.filter((a) => a.status === "done").length;
+  document.getElementById("stats").innerHTML =
+    `<div>残り見積 ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
+}
+
+function renderHero() {
+  const hero = document.getElementById("hero");
+  const cur = currentAsg();
+  if (!cur) {
+    const has = todays().length > 0;
+    hero.innerHTML = `<div class="empty-card">${
+      has
+        ? "今日のタスクはすべて完了しました 🎉<br><small>おつかれさまでした</small>"
+        : "今日のタスクはまだありません。<br><small>「+ タスクを追加」か、計画タブの「今日へ」から登録できます</small>"
+    }</div>`;
+    document.body.classList.remove("overrun");
+    return;
+  }
+  const run = runningAsg();
+  const mine = run && run.id === cur.id;
+  const over = mine && isOver(cur);
+  document.body.classList.toggle("overrun", !!over);
+
+  const t = cur.taskId ? taskById(cur.taskId) : null;
+  const goal = t && t.goalId ? goalById(t.goalId) : null;
+  const goalChip = goal
+    ? `<span class="goal-chip" style="background:${goalColor(goal.id)}22;color:${goalColor(goal.id)}">${esc(goal.title)}</span>`
+    : "";
+
+  const eyebrow = over ? "⚠ 見積時間を超過しています" : mine ? "作業中" : "次にやること";
+  const buttons = mine
+    ? `<button class="btn solid" data-action="finish" data-id="${cur.id}">完了にする</button>
+       <button class="btn" data-action="pause" data-id="${cur.id}">中断</button>`
+    : `<button class="btn solid" data-action="start" data-id="${cur.id}">作業を開始</button>`;
+
+  hero.innerHTML = `
+    <div class="hero ${over ? "overrun" : ""}">
+      <div class="hero-eyebrow">${eyebrow}</div>
+      <div class="hero-title">${goalChip}${esc(asgTitle(cur))}</div>
+      <div class="hero-meta">${cur.start} 開始予定 ・ 見積 ${cur.estimateMin}分</div>
+      <div class="timer-row">
+        <div class="timer-digits" id="timer-digits">${fmtDur(elapsedSec(cur))}</div>
+        <div class="timer-est">/ ${cur.estimateMin}:00</div>
+      </div>
+      <div class="bar"><div class="bar-fill" id="timer-bar"></div></div>
+      <div class="btn-row">${buttons}</div>
+      ${over ? `<div class="overrun-note">切り上げて次の短いタスクに移ることを検討しましょう。続ける場合はこのままで構いません。</div>` : ""}
+    </div>`;
+  updateTimerVisuals(cur);
+}
+
+function renderTimeline() {
+  const box = document.getElementById("timeline");
+  const list = todays();
+  const cur = currentAsg();
+  if (!list.length) {
+    box.innerHTML = `<div class="t-sub" style="padding:8px 0 24px;">タスクを追加するとここに表示されます</div>`;
+    return;
+  }
+  box.innerHTML = list
+    .map((a) => {
+      const done = a.status === "done";
+      const active = cur && cur.id === a.id;
+      const past = !done && hmToMin(a.start) + a.estimateMin < nowMin();
+      const spent = a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
+      const t = a.taskId ? taskById(a.taskId) : null;
+      const rec = t && t.type === "recurring" ? " ・ 🔁" : "";
+      const actions = done
+        ? `<button class="sbtn muted" data-action="remove" data-id="${a.id}">削除</button>`
+        : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
+           <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
+      return `
+        <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""}">
+          <div class="t-time">${a.start}</div>
+          <div class="t-dot"></div>
+          <div class="t-card">
+            <div class="t-main">
+              <div class="t-title">${esc(asgTitle(a))}</div>
+              <div class="t-sub">見積 ${a.estimateMin}分${spent}${rec}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
+            </div>
+            <div class="t-actions">${actions}</div>
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
+/* ---------- 描画:計画 ---------- */
+function renderPlan() {
+  // 目標
+  const gl = document.getElementById("goal-list");
+  gl.innerHTML = state.goals.length
+    ? state.goals
+        .map((g) => {
+          const cnt = state.tasks.filter((t) => t.goalId === g.id).length;
+          return `
+          <div class="g-row">
+            <div class="p-main">
+              <div class="p-title"><span class="goal-chip" style="background:${goalColor(g.id)}22;color:${goalColor(g.id)}">●</span>${esc(g.title)}</div>
+              <div class="p-sub">関連タスク ${cnt}件</div>
+            </div>
+            <div class="p-actions">
+              <button class="sbtn muted" data-action="goal-remove" data-id="${g.id}">削除</button>
+            </div>
+          </div>`;
+        })
+        .join("")
+    : `<div class="plan-empty">長期目標を登録すると、タスクと紐づけて管理できます。</div>`;
+
+  // タスクツリー
+  const tree = document.getElementById("task-tree");
+  const roots = state.tasks.filter((t) => !t.parentId);
+  if (!state.tasks.length) {
+    tree.innerHTML = `<div class="plan-empty">ここに登録したタスクの原本を、日々のカレンダーへ割り当てていきます。<br>周期タスク(毎週◯曜など)は該当日に自動で「きょう」へ現れます。</div>`;
+    return;
+  }
+  const renderNode = (t, depth) => {
+    const goal = t.goalId ? goalById(t.goalId) : null;
+    const chip = goal
+      ? `<span class="goal-chip" style="background:${goalColor(goal.id)}22;color:${goalColor(goal.id)}">${esc(goal.title)}</span>`
+      : "";
+    const children = state.tasks.filter((c) => c.parentId === t.id);
+    const row = `
+      <div class="p-row" style="margin-left:${depth * 18}px;border-left-color:${goal ? goalColor(goal.id) : "transparent"}">
+        <div class="p-main">
+          <div class="p-title ${t.done ? "done-task" : ""}">${chip}${esc(t.title)}</div>
+          <div class="p-sub">${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件` : ""}</div>
+        </div>
+        <div class="p-actions">
+          <button class="sbtn" data-action="assign-today" data-id="${t.id}">今日へ</button>
+          <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
+          <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
+        </div>
+      </div>`;
+    return row + children.map((c) => renderNode(c, depth + 1)).join("");
+  };
+  tree.innerHTML = roots.map((t) => renderNode(t, 0)).join("");
+}
+
+function renderAll() {
+  renderHeader();
+  if (view === "today") {
+    const cur = currentAsg();
+    renderedCurrentId = cur ? cur.id : null;
+    const run = runningAsg();
+    renderedOverrun = !!(run && isOver(run));
+    renderHero();
+    renderTimeline();
+  } else {
+    renderPlan();
+  }
+}
+
+function updateTimerVisuals(cur) {
+  const digits = document.getElementById("timer-digits");
+  const bar = document.getElementById("timer-bar");
+  if (!cur || !digits || !bar) return;
+  const el = elapsedSec(cur);
+  digits.textContent = fmtDur(el);
+  bar.style.width = `${Math.min(100, (el / (cur.estimateMin * 60)) * 100)}%`;
+}
+
+/* ---------- タスクフォーム ---------- */
+function fillParentGoalSelects(excludeId) {
+  const ps = document.getElementById("t-parent");
+  const ex = excludeId ? descendants(excludeId) : new Set();
+  if (excludeId) ex.add(excludeId);
+  ps.innerHTML =
+    `<option value="">(なし・最上位)</option>` +
+    state.tasks
+      .filter((t) => !ex.has(t.id))
+      .map((t) => `<option value="${t.id}">${esc(t.title)}</option>`)
+      .join("");
+  const gs = document.getElementById("t-goal");
+  gs.innerHTML =
+    `<option value="">(なし)</option>` +
+    state.goals.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join("");
+}
+
+function updateRecVisibility() {
+  const type = document.getElementById("t-type").value;
+  document.getElementById("rec-block").classList.toggle("hidden", type !== "recurring");
+  const kind = document.getElementById("t-rkind").value;
+  document.getElementById("rec-ndays").classList.toggle("hidden", kind !== "everyNDays");
+  document.getElementById("rec-weekly").classList.toggle("hidden", kind !== "weekly");
+  document.getElementById("rec-monthly").classList.toggle("hidden", kind !== "monthly");
+  document.getElementById("rec-yearly").classList.toggle("hidden", kind !== "yearly");
+}
+
+function openTaskForm(task, parentId) {
+  editingTaskId = task ? task.id : null;
+  addChildOf = parentId || null;
+  fillParentGoalSelects(editingTaskId);
+  document.getElementById("task-form-title").textContent = task ? "タスクを編集" : "タスクを追加";
+  document.getElementById("t-title").value = task ? task.title : "";
+  document.getElementById("t-parent").value = task ? task.parentId || "" : parentId || "";
+  document.getElementById("t-goal").value = task ? task.goalId || "" : "";
+  document.getElementById("t-type").value = task ? task.type : "single";
+  document.getElementById("t-est").value = task ? task.estimateMin : 25;
+  document.getElementById("t-defstart").value = task ? task.defStart || "09:00" : "09:00";
+  document.getElementById("t-anchor").value = todayKey();
+  const r = task && task.recurrence;
+  if (r) {
+    document.getElementById("t-rkind").value = r.kind;
+    if (r.kind === "everyNDays") {
+      document.getElementById("t-rn").value = r.n;
+      document.getElementById("t-anchor").value = r.anchor || todayKey();
+    }
+    if (r.kind === "weekly") {
+      document.querySelectorAll("#rec-weekly input").forEach((cb) => {
+        cb.checked = (r.weekdays || []).includes(Number(cb.value));
+      });
+    }
+    if (r.kind === "monthly") document.getElementById("t-rday").value = r.day;
+    if (r.kind === "yearly") {
+      document.getElementById("t-rmonth").value = r.month;
+      document.getElementById("t-rmday").value = r.day;
+    }
+  } else {
+    document.querySelectorAll("#rec-weekly input").forEach((cb) => (cb.checked = false));
+  }
+  document.getElementById("task-delete-row").classList.toggle("hidden", !task);
+  updateRecVisibility();
+  const form = document.getElementById("task-form");
+  form.classList.remove("hidden");
+  form.scrollIntoView({ behavior: "smooth" });
+  document.getElementById("t-title").focus();
+}
+
+function readRecurrence() {
+  const kind = document.getElementById("t-rkind").value;
+  if (kind === "everyNDays") {
+    return {
+      kind,
+      n: Math.max(1, Number(document.getElementById("t-rn").value) || 1),
+      anchor: document.getElementById("t-anchor").value || todayKey(),
+    };
+  }
+  if (kind === "weekly") {
+    const days = [...document.querySelectorAll("#rec-weekly input:checked")].map((cb) => Number(cb.value));
+    return { kind, weekdays: days.length ? days : [new Date().getDay()] };
+  }
+  if (kind === "monthly") {
+    return { kind, day: Math.min(31, Math.max(1, Number(document.getElementById("t-rday").value) || 1)) };
+  }
+  return {
+    kind: "yearly",
+    month: Math.min(12, Math.max(1, Number(document.getElementById("t-rmonth").value) || 1)),
+    day: Math.min(31, Math.max(1, Number(document.getElementById("t-rmday").value) || 1)),
+  };
+}
+
+function saveTaskForm() {
+  const title = document.getElementById("t-title").value.trim();
+  if (!title) return;
+  const type = document.getElementById("t-type").value;
+  const data = {
+    title,
+    parentId: document.getElementById("t-parent").value || null,
+    goalId: document.getElementById("t-goal").value || null,
+    type,
+    estimateMin: Math.max(1, Number(document.getElementById("t-est").value) || 25),
+    defStart: document.getElementById("t-defstart").value || "09:00",
+    recurrence: type === "recurring" ? readRecurrence() : null,
+  };
+  if (editingTaskId) {
+    const t = taskById(editingTaskId);
+    Object.assign(t, data);
+  } else {
+    state.tasks.push({ id: uid("t"), done: false, createdDate: todayKey(), ...data });
+  }
+  editingTaskId = null;
+  document.getElementById("task-form").classList.add("hidden");
+  materializeToday();
+  save();
+  renderPlan();
+}
+
+/* ---------- スプレッドシート同期 ---------- */
 const SYNC_URL_KEY = "hisho:sync:url";
 const SYNC_TOKEN_KEY = "hisho:sync:token";
 const LAST_SYNC_KEY = "hisho:sync:last";
@@ -97,6 +683,36 @@ function scheduleSync() {
   syncTimer = setTimeout(() => doSync(false), 4000);
 }
 
+function syncPayload() {
+  return {
+    token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
+    goals: state.goals.map((g) => ({ id: g.id, title: g.title })),
+    tasks: state.tasks.map((t) => {
+      const p = t.parentId ? taskById(t.parentId) : null;
+      const g = t.goalId ? goalById(t.goalId) : null;
+      return {
+        id: t.id,
+        title: t.title,
+        parent: p ? p.title : "",
+        goal: g ? g.title : "",
+        kind: recurrenceLabel(t),
+        estimateMin: t.estimateMin,
+        defStart: t.defStart || "",
+        done: t.type === "single" ? (t.done ? "完了" : "未完了") : "",
+      };
+    }),
+    assignments: state.assignments.map((a) => ({
+      id: a.id,
+      date: a.date,
+      title: asgTitle(a),
+      start: a.start,
+      estimateMin: a.estimateMin,
+      status: a.status,
+      spentSec: a.spentSec + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0),
+    })),
+  };
+}
+
 async function doSync(manual) {
   if (!syncConfigured()) {
     if (manual) setSyncMsg("先にURLと合言葉を保存してください", true);
@@ -112,10 +728,7 @@ async function doSync(manual) {
   try {
     const res = await fetch(localStorage.getItem(SYNC_URL_KEY), {
       method: "POST",
-      body: JSON.stringify({
-        token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
-        tasks: state.tasks,
-      }),
+      body: JSON.stringify(syncPayload()),
     });
     const data = await res.json();
     if (data && data.ok) {
@@ -133,260 +746,36 @@ async function doSync(manual) {
 
 window.addEventListener("online", () => doSync(false));
 
-/* ---------- 参照ヘルパー ---------- */
-const todays = () =>
-  state.tasks
-    .filter((t) => t.date === todayKey())
-    .sort((a, b) => hmToMin(a.start) - hmToMin(b.start));
-
-const runningTask = () => todays().find((t) => t.status === "doing") || null;
-
-const elapsedSec = (t) =>
-  t.spentSec + (t.status === "doing" && t.startedAt ? (Date.now() - t.startedAt) / 1000 : 0);
-
-const isOver = (t) => elapsedSec(t) > t.estimateMin * 60;
-
-/* 秘書ロジック:いま取り組むべきタスク */
-function currentTask() {
-  const list = todays();
-  return (
-    runningTask() ||
-    list.filter((t) => t.status !== "done" && hmToMin(t.start) <= nowMin()).pop() ||
-    list.find((t) => t.status !== "done") ||
-    null
-  );
-}
-
-/* ---------- アラート ---------- */
-function beep() {
+/* ---------- 最新版に更新 ---------- */
+async function forceUpdate() {
+  setSyncMsg("更新を確認中…");
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
-    const play = (t, freq) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "sine";
-      o.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
-      g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.35);
-      o.connect(g).connect(ctx.destination);
-      o.start(ctx.currentTime + t);
-      o.stop(ctx.currentTime + t + 0.4);
-    };
-    play(0, 880);
-    play(0.45, 880);
-    play(0.9, 1175);
-  } catch (e) {}
-  try {
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
-  } catch (e) {}
-}
-
-function notify(title, body) {
-  try {
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(title, { body });
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.update();
     }
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
   } catch (e) {}
-}
-
-/* ---------- 操作 ---------- */
-async function startTask(id) {
-  try {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  } catch (e) {}
-  try {
-    if (navigator.wakeLock && !wakeLock) {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    }
-  } catch (e) {}
-  lastBeep = 0;
-  state.tasks = state.tasks.map((t) => {
-    if (t.id === id) return { ...t, status: "doing", startedAt: Date.now() };
-    if (t.status === "doing") return { ...t, status: "todo", spentSec: elapsedSec(t), startedAt: null };
-    return t;
-  });
-  save();
-  renderAll();
-}
-
-function pauseTask(id) {
-  state.tasks = state.tasks.map((t) =>
-    t.id === id ? { ...t, status: "todo", spentSec: elapsedSec(t), startedAt: null } : t
-  );
-  releaseWake();
-  save();
-  renderAll();
-}
-
-function finishTask(id) {
-  state.tasks = state.tasks.map((t) =>
-    t.id === id ? { ...t, status: "done", spentSec: elapsedSec(t), startedAt: null } : t
-  );
-  releaseWake();
-  save();
-  renderAll();
-}
-
-function removeTask(id) {
-  state.tasks = state.tasks.filter((t) => t.id !== id);
-  save();
-  renderAll();
-}
-
-function releaseWake() {
-  if (wakeLock && !runningTask()) {
-    try { wakeLock.release(); } catch (e) {}
-    wakeLock = null;
-  }
-}
-
-function addTask(title, start, estimateMin) {
-  state.tasks.push({
-    id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    date: todayKey(),
-    title: title.trim(),
-    start,
-    estimateMin: Math.max(1, Number(estimateMin) || 25),
-    status: "todo",
-    spentSec: 0,
-    startedAt: null,
-  });
-  save();
-  renderAll();
-}
-
-/* ---------- 描画 ---------- */
-function renderHeader() {
-  const d = new Date();
-  const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-  document.getElementById("date-label").textContent = `${d.getMonth() + 1}月${d.getDate()}日(${youbi})`;
-
-  const list = todays();
-  const rest = list.filter((t) => t.status !== "done").reduce((s, t) => s + t.estimateMin, 0);
-  const done = list.filter((t) => t.status === "done").length;
-  document.getElementById("stats").innerHTML =
-    `<div>残り見積 ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
-}
-
-function renderHero() {
-  const hero = document.getElementById("hero");
-  const cur = currentTask();
-  if (!cur) {
-    const has = todays().length > 0;
-    hero.innerHTML = `<div class="empty-card">${
-      has
-        ? "今日のタスクはすべて完了しました 🎉<br><small>おつかれさまでした</small>"
-        : "今日のタスクはまだありません。<br><small>下の「+ タスクを追加」から今日の予定を登録しましょう</small>"
-    }</div>`;
-    document.body.classList.remove("overrun");
-    return;
-  }
-
-  const run = runningTask();
-  const mine = run && run.id === cur.id;
-  const over = mine && isOver(cur);
-  document.body.classList.toggle("overrun", !!over);
-
-  const eyebrow = over ? "⚠ 見積時間を超過しています" : mine ? "作業中" : "次にやること";
-  const buttons = mine
-    ? `<button class="btn solid" data-action="finish" data-id="${cur.id}">完了にする</button>
-       <button class="btn" data-action="pause" data-id="${cur.id}">中断</button>`
-    : `<button class="btn solid" data-action="start" data-id="${cur.id}">作業を開始</button>`;
-
-  hero.innerHTML = `
-    <div class="hero ${over ? "overrun" : ""}">
-      <div class="hero-eyebrow">${eyebrow}</div>
-      <div class="hero-title">${esc(cur.title)}</div>
-      <div class="hero-meta">${cur.start} 開始予定 ・ 見積 ${cur.estimateMin}分</div>
-      <div class="timer-row">
-        <div class="timer-digits" id="timer-digits">${fmtDur(elapsedSec(cur))}</div>
-        <div class="timer-est">/ ${cur.estimateMin}:00</div>
-      </div>
-      <div class="bar"><div class="bar-fill" id="timer-bar"></div></div>
-      <div class="btn-row">${buttons}</div>
-      ${over ? `<div class="overrun-note">切り上げて次の短いタスクに移ることを検討しましょう。続ける場合はこのままで構いません。</div>` : ""}
-    </div>`;
-  updateTimerVisuals(cur);
-}
-
-function renderTimeline() {
-  const box = document.getElementById("timeline");
-  const list = todays();
-  const cur = currentTask();
-  if (!list.length) {
-    box.innerHTML = `<div class="t-sub" style="padding:8px 0 24px;">タスクを追加するとここに表示されます</div>`;
-    return;
-  }
-  box.innerHTML = list
-    .map((t) => {
-      const done = t.status === "done";
-      const active = cur && cur.id === t.id;
-      const past = !done && hmToMin(t.start) + t.estimateMin < nowMin();
-      const spent = t.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(t))}` : "";
-      const actions = done
-        ? `<button class="sbtn muted" data-action="remove" data-id="${t.id}">削除</button>`
-        : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${t.id}">開始</button>`}
-           <button class="sbtn muted" data-action="finish" data-id="${t.id}">完了</button>`;
-      return `
-        <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""}">
-          <div class="t-time">${t.start}</div>
-          <div class="t-dot"></div>
-          <div class="t-card">
-            <div class="t-main">
-              <div class="t-title">${esc(t.title)}</div>
-              <div class="t-sub">見積 ${t.estimateMin}分${spent}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
-            </div>
-            <div class="t-actions">${actions}</div>
-          </div>
-        </div>`;
-    })
-    .join("");
-}
-
-function renderAll() {
-  const cur = currentTask();
-  renderedCurrentId = cur ? cur.id : null;
-  const run = runningTask();
-  renderedOverrun = !!(run && isOver(run));
-  renderHeader();
-  renderHero();
-  renderTimeline();
-}
-
-function updateTimerVisuals(cur) {
-  const run = runningTask();
-  const digits = document.getElementById("timer-digits");
-  const bar = document.getElementById("timer-bar");
-  if (!cur || !digits || !bar) return;
-  const el = elapsedSec(cur);
-  digits.textContent = fmtDur(el);
-  bar.style.width = `${Math.min(100, (el / (cur.estimateMin * 60)) * 100)}%`;
+  location.reload();
 }
 
 /* ---------- 毎秒の処理 ---------- */
 function tick() {
-  const cur = currentTask();
+  if (view !== "today") return;
+  const cur = currentAsg();
   const curId = cur ? cur.id : null;
-  const run = runningTask();
+  const run = runningAsg();
   const over = !!(run && isOver(run));
-
-  // 「いま」のタスクや超過状態が変わったら全体を描き直す
   if (curId !== renderedCurrentId || over !== renderedOverrun) {
     renderAll();
   } else {
     updateTimerVisuals(cur);
   }
-
-  // 超過アラート(60秒ごとに再通知)
   if (run && over && Date.now() - lastBeep > 60000) {
     lastBeep = Date.now();
     beep();
-    notify("見積時間を超過しました", `「${run.title}」を切り上げるか、続行するか選んでください`);
+    notify("見積時間を超過しました", `「${asgTitle(run)}」を切り上げるか、続行するか選んでください`);
   }
 }
 
@@ -395,10 +784,12 @@ document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
   const { action, id } = btn.dataset;
-  if (action === "start") startTask(id);
-  else if (action === "pause") pauseTask(id);
-  else if (action === "finish") finishTask(id);
-  else if (action === "remove") removeTask(id);
+
+  /* きょう */
+  if (action === "start") startAsg(id);
+  else if (action === "pause") pauseAsg(id);
+  else if (action === "finish") finishAsg(id);
+  else if (action === "remove") removeAsg(id);
   else if (action === "add-open") {
     document.getElementById("add-form").classList.remove("hidden");
     document.getElementById("fab").classList.add("hidden");
@@ -407,7 +798,52 @@ document.addEventListener("click", (e) => {
   } else if (action === "add-cancel") {
     document.getElementById("add-form").classList.add("hidden");
     document.getElementById("fab").classList.remove("hidden");
-  } else if (action === "settings-open") {
+  } else if (action === "add-confirm") {
+    const title = document.getElementById("f-title").value;
+    if (!title.trim()) return;
+    addAdhoc(title, document.getElementById("f-start").value || nowHM(), document.getElementById("f-est").value);
+    document.getElementById("f-title").value = "";
+    document.getElementById("add-form").classList.add("hidden");
+    document.getElementById("fab").classList.remove("hidden");
+  }
+
+  /* タブ */
+  else if (action === "tab") switchView(btn.dataset.tab);
+
+  /* 目標 */
+  else if (action === "goal-add") {
+    document.getElementById("goal-form").classList.remove("hidden");
+    document.getElementById("g-title").focus();
+  } else if (action === "goal-cancel") {
+    document.getElementById("goal-form").classList.add("hidden");
+  } else if (action === "goal-save") {
+    const v = document.getElementById("g-title").value;
+    if (!v.trim()) return;
+    saveGoal(v);
+    document.getElementById("g-title").value = "";
+    document.getElementById("goal-form").classList.add("hidden");
+  } else if (action === "goal-remove") {
+    if (confirm("この目標を削除しますか?(タスクは残ります)")) removeGoal(id);
+  }
+
+  /* タスク原本 */
+  else if (action === "task-add") openTaskForm(null, null);
+  else if (action === "task-child") openTaskForm(null, id);
+  else if (action === "task-edit") openTaskForm(taskById(id), null);
+  else if (action === "task-cancel") {
+    editingTaskId = null;
+    document.getElementById("task-form").classList.add("hidden");
+  } else if (action === "task-save") saveTaskForm();
+  else if (action === "task-delete") {
+    if (confirm("このタスクを削除しますか?(子タスクは1段上に移動します)")) {
+      removeTaskDef(editingTaskId);
+      editingTaskId = null;
+      document.getElementById("task-form").classList.add("hidden");
+    }
+  } else if (action === "assign-today") assignTaskToToday(id);
+
+  /* 設定 */
+  else if (action === "settings-open") {
     const panel = document.getElementById("settings");
     panel.classList.remove("hidden");
     document.getElementById("s-url").value = localStorage.getItem(SYNC_URL_KEY) || "";
@@ -430,28 +866,28 @@ document.addEventListener("click", (e) => {
       ? "保存しました。「今すぐ同期」で動作を確認できます"
       : "同期設定を削除しました";
     setSyncMsg(syncStatusLabel());
-  } else if (action === "sync-now") {
-    doSync(true);
-  } else if (action === "add-confirm") {
-    const title = document.getElementById("f-title").value;
-    if (!title.trim()) return;
-    addTask(title, document.getElementById("f-start").value || nowHM(), document.getElementById("f-est").value);
-    document.getElementById("f-title").value = "";
-    document.getElementById("add-form").classList.add("hidden");
-    document.getElementById("fab").classList.remove("hidden");
-  }
+  } else if (action === "sync-now") doSync(true);
+  else if (action === "force-update") forceUpdate();
 });
 
-/* 画面復帰時にWake Lockを取り直す(iOSはバックグラウンドで解除されるため) */
+document.addEventListener("change", (e) => {
+  if (e.target.id === "t-type" || e.target.id === "t-rkind") updateRecVisibility();
+});
+
 document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "visible" && runningTask() && navigator.wakeLock && !wakeLock) {
-    try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  if (document.visibilityState === "visible") {
+    if (runningAsg() && navigator.wakeLock && !wakeLock) {
+      try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+    }
+    materializeToday();
+    renderAll();
   }
-  if (document.visibilityState === "visible") renderAll();
 });
 
 /* ---------- 起動 ---------- */
 load();
+materializeToday();
+document.body.dataset.view = "today";
 renderAll();
 setSyncMsg(syncStatusLabel());
 if (syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1") doSync(false);

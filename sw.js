@@ -1,5 +1,7 @@
-/* オフライン対応:アプリ本体をキャッシュし、圏外でも起動できるようにする */
-const CACHE = "hisho-v2";
+/* オフライン対応 Service Worker(v3)
+   ネットワーク優先に変更:オンラインなら常に最新版を取得し、
+   圏外のときだけキャッシュで動く。更新が反映されない問題への恒久対策。 */
+const CACHE = "hisho-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -25,21 +27,19 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-/* キャッシュ優先。裏で最新版を取得して次回に反映する */
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  const sameOrigin = new URL(e.request.url).origin === self.location.origin;
+  if (!sameOrigin) return;
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fresh = fetch(e.request)
-        .then((res) => {
-          if (res.ok && new URL(e.request.url).origin === self.location.origin) {
-            const clone = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, clone));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fresh;
-    })
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
+          const clone = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, clone));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
