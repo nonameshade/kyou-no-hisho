@@ -461,3 +461,121 @@ body[data-view="gantt"] #fab { display: none; }
   opacity: .55;
 }
 .g-empty { padding: 20px 14px; font-size: 12.5px; color: var(--muted); line-height: 1.8; }
+
+/* ---------- フェーズ4:統合ガント・課題 ---------- */
+.g-hcell2 {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  text-align: center;
+  font-size: 9.5px;
+  color: var(--muted);
+  padding-top: 3px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+}
+.g-hcell2.we { background: #F3F5F8; }
+.g-hcell2.td { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.g-hcell2.sel { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.g-hcell2 .g-mon2 { display: block; font-size: 9px; font-weight: 700; color: var(--ink); line-height: 1.2; height: 11px; }
+
+.g-sum-cell {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border: none;
+  border-radius: 5px;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+.g-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 3;
+  font-family: inherit;
+}
+.g-cell .mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+}
+.g-cell .mark.todo-m { background: var(--accent); color: #fff; }
+.g-cell .mark.done-m { background: var(--done); color: #fff; }
+.g-cell .mark.virt-m { background: transparent; font-size: 11px; opacity: .75; }
+.g-we-col { position: absolute; top: 0; bottom: 0; background: #F5F7F9; z-index: 0; }
+.g-bar { z-index: 1; opacity: .28; }
+.g-today-line { z-index: 0; }
+
+/* 課題カード */
+.issue-card {
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 13px 14px;
+  margin-bottom: 10px;
+  border-left: 4px solid transparent;
+}
+.issue-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.issue-title { font-size: 15.5px; font-weight: 700; }
+.issue-purpose { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.issue-deadline {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 9px;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.issue-deadline.near { background: #FDEBD2; color: #B0692B; }
+.issue-deadline.over { background: var(--alert-soft); color: var(--alert); }
+.issue-targets { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.issue-target { font-size: 12.5px; display: flex; gap: 7px; align-items: baseline; }
+.rank-chip {
+  font-size: 10.5px;
+  font-weight: 800;
+  min-width: 20px;
+  text-align: center;
+  border-radius: 6px;
+  padding: 1px 4px;
+  background: var(--ink);
+  color: #fff;
+  flex-shrink: 0;
+}
+.issue-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+.issue-foot .p-sub { margin: 0; }
+
+/* 目標(ランク)入力行 */
+.target-row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+.target-row input.rank { width: 56px; flex-shrink: 0; text-align: center; }
+.target-row input.ttext { flex: 1; }
+.target-row .sbtn { flex-shrink: 0; }

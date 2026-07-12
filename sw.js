@@ -1,7 +1,7 @@
 /* オフライン対応 Service Worker(v3)
    ネットワーク優先に変更:オンラインなら常に最新版を取得し、
    圏外のときだけキャッシュで動く。更新が反映されない問題への恒久対策。 */
-const CACHE = "hisho-v5";
+const CACHE = "hisho-v6";
 const ASSETS = [
   "./",
   "./index.html",

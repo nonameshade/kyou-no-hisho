@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>きょうの秘書</title>
+  <title>今日の秘書</title>
   <meta name="description" content="今日やるべき作業を教えてくれる、あなた専用の秘書アプリ">
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#EDF0F3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="きょうの秘書">
+  <meta name="apple-mobile-web-app-title" content="今日の秘書">
   <link rel="apple-touch-icon" href="./icon-180.png">
   <link rel="icon" href="./icon-192.png">
   <link rel="stylesheet" href="./styles.css">
@@ -19,7 +19,7 @@
 
     <header class="topbar">
       <div>
-        <div class="app-label">きょうの秘書</div>
+        <div class="app-label">今日の秘書</div>
         <div class="date" id="date-label"></div>
       </div>
       <div class="top-right">
@@ -29,10 +29,9 @@
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-action="tab" data-tab="today">きょう</button>
-      <button class="tab" data-action="tab" data-tab="cal">カレンダー</button>
+      <button class="tab active" data-action="tab" data-tab="today">今日</button>
       <button class="tab" data-action="tab" data-tab="gantt">ガント</button>
-      <button class="tab" data-action="tab" data-tab="plan">計画</button>
+      <button class="tab" data-action="tab" data-tab="plan">課題</button>
     </nav>
 
     <section id="settings" class="add-form hidden">
@@ -54,14 +53,14 @@
       <div class="t-sub" id="settings-msg" style="margin-top:10px;"></div>
     </section>
 
-    <!-- ============ きょう ============ -->
+    <!-- ============ 今日 ============ -->
     <div id="view-today">
       <section id="hero"></section>
-      <h2 class="section-label">きょうのタイムライン</h2>
+      <h2 class="section-label">今日のタイムライン</h2>
       <div id="timeline"></div>
 
       <section id="add-form" class="add-form hidden">
-        <div class="form-title">きょうのタスクを追加</div>
+        <div class="form-title">今日のタスクを追加</div>
         <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
         <div class="form-row">
           <label>開始時刻
@@ -78,18 +77,18 @@
       </section>
     </div>
 
-    <!-- ============ カレンダー ============ -->
-    <div id="view-cal" class="hidden">
+    <!-- ============ ガント(計画モード) ============ -->
+    <div id="view-gantt" class="hidden">
       <div class="cal-nav">
-        <button class="sbtn muted" data-action="cal-prev">◀ 前月</button>
-        <div class="cal-month" id="cal-month-label"></div>
-        <button class="sbtn muted" data-action="cal-next">翌月 ▶</button>
+        <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
+        <button class="sbtn" data-action="g-today">今日へ</button>
+        <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
       </div>
-      <div class="cal-dow">
-        <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+      <div id="gantt"></div>
+      <div class="t-sub" style="margin:8px 2px 16px;">
+        マスをタップするとその日に割り当て(●)/解除できます。✓は完了、🔁は周期タスクの自動予定。
+        日付や「見積合計」の行をタップすると、下にその日の詳細が開き時刻を調整できます。
       </div>
-      <div id="cal-grid"></div>
-      <div class="t-sub" style="margin:6px 2px 18px;">マスの色が濃い日ほど見積時間の合計が多い日です。日付をタップすると詳細が開きます。</div>
 
       <section id="day-detail"></section>
 
@@ -120,32 +119,37 @@
       </section>
     </div>
 
-    <!-- ============ ガント ============ -->
-    <div id="view-gantt" class="hidden">
-      <div class="cal-nav">
-        <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
-        <button class="sbtn" data-action="g-today">今日へ</button>
-        <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
-      </div>
-      <div id="gantt"></div>
-      <div class="t-sub" style="margin:8px 2px 18px;">バーはタスクの予定期間(計画タブで設定)。親タスクの期間は子から自動で決まります。%は見積時間ベースの進捗率です。</div>
-    </div>
-
-    <!-- ============ 計画 ============ -->
+    <!-- ============ 課題 ============ -->
     <div id="view-plan" class="hidden">
 
       <section class="plan-block">
         <div class="plan-head">
-          <h2 class="section-label">長期目標</h2>
-          <button class="sbtn" data-action="goal-add">+ 目標を追加</button>
+          <h2 class="section-label">課題</h2>
+          <button class="sbtn" data-action="issue-add">+ 課題を追加</button>
         </div>
-        <div id="goal-list"></div>
-        <div id="goal-form" class="add-form hidden">
-          <input type="text" id="g-title" placeholder="目標名(例: 資格試験に合格する)" maxlength="60">
-          <div class="btn-row">
-            <button class="btn solid" data-action="goal-save">保存する</button>
-            <button class="btn" data-action="goal-cancel">やめる</button>
-          </div>
+        <div id="issue-list"></div>
+      </section>
+
+      <section id="issue-form" class="add-form hidden">
+        <div class="form-title" id="issue-form-title">課題を追加</div>
+        <label class="f-label">課題
+          <input type="text" id="i-title" placeholder="例: Amazonレビュー" maxlength="80">
+        </label>
+        <label class="f-label">目的
+          <input type="text" id="i-purpose" placeholder="例: Vineユーザーに選ばれること" maxlength="120">
+        </label>
+        <label class="f-label">期日
+          <input type="date" id="i-deadline">
+        </label>
+        <div class="f-label">目標(ランク別)</div>
+        <div id="target-rows"></div>
+        <button class="sbtn muted" data-action="target-add" style="margin-top:8px;">+ 目標を追加</button>
+        <div class="btn-row">
+          <button class="btn solid" data-action="issue-save">保存する</button>
+          <button class="btn" data-action="issue-cancel">やめる</button>
+        </div>
+        <div class="btn-row hidden" id="issue-delete-row">
+          <button class="btn danger" data-action="issue-delete">この課題を削除</button>
         </div>
       </section>
 
@@ -164,7 +168,7 @@
           <label>親タスク
             <select id="t-parent"></select>
           </label>
-          <label>関連する目標
+          <label>関連する課題
             <select id="t-goal"></select>
           </label>
         </div>
