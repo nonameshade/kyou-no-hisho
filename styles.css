@@ -313,3 +313,70 @@ select {
 .weekday-row input { width: auto; margin: 0 3px 0 0; }
 .btn.danger { border-color: var(--alert); color: var(--alert); }
 .plan-empty { font-size: 12.5px; color: var(--muted); padding: 8px 2px 4px; line-height: 1.7; }
+
+/* ---------- カレンダー(フェーズ3b) ---------- */
+body[data-view="cal"] .wrap { max-width: 760px; }
+body[data-view="cal"] #fab { display: none; }
+
+.cal-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.cal-month { font-size: 17px; font-weight: 700; }
+
+.cal-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.cal-dow span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.cal-dow span:first-child { color: var(--alert); }
+.cal-dow span:last-child { color: #3D5A9E; }
+
+#cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.cal-cell {
+  min-height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 5px 4px 4px;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink);
+}
+.cal-cell.blank { border-color: transparent; background: transparent; cursor: default; }
+.cal-cell .cal-d { font-size: 12.5px; font-weight: 700; line-height: 1; }
+.cal-cell .cal-sum { font-size: 10.5px; font-weight: 700; color: var(--accent); line-height: 1; }
+.cal-cell .cal-cnt { font-size: 9.5px; color: var(--muted); line-height: 1; }
+.cal-cell.heat1 { background: #EAF4F1; }
+.cal-cell.heat2 { background: #D2E9E2; }
+.cal-cell.heat3 { background: #B5DCD0; }
+.cal-cell.heat4 { background: #F6D9D3; }
+.cal-cell.heat4 .cal-sum { color: var(--alert); }
+.cal-cell.today-cell { border: 2px solid var(--ink); }
+.cal-cell.sel { border: 2px solid var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cal-cell.past { opacity: .62; }
+
+.virtual-tag {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}

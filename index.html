@@ -30,6 +30,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-action="tab" data-tab="today">きょう</button>
+      <button class="tab" data-action="tab" data-tab="cal">カレンダー</button>
       <button class="tab" data-action="tab" data-tab="plan">計画</button>
     </nav>
 
@@ -72,6 +73,48 @@
         <div class="btn-row">
           <button class="btn solid" data-action="add-confirm">追加する</button>
           <button class="btn" data-action="add-cancel">やめる</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ カレンダー ============ -->
+    <div id="view-cal" class="hidden">
+      <div class="cal-nav">
+        <button class="sbtn muted" data-action="cal-prev">◀ 前月</button>
+        <div class="cal-month" id="cal-month-label"></div>
+        <button class="sbtn muted" data-action="cal-next">翌月 ▶</button>
+      </div>
+      <div class="cal-dow">
+        <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+      </div>
+      <div id="cal-grid"></div>
+      <div class="t-sub" style="margin:6px 2px 18px;">マスの色が濃い日ほど見積時間の合計が多い日です。日付をタップすると詳細が開きます。</div>
+
+      <section id="day-detail"></section>
+
+      <section id="asg-form" class="add-form hidden">
+        <div class="form-title" id="asg-form-title">タスクを割り当て</div>
+        <label class="f-label">タスクを選ぶ
+          <select id="a-task"></select>
+        </label>
+        <input type="text" id="a-title" placeholder="タスク名(直接入力)" maxlength="80" class="hidden" style="margin-top:10px;">
+        <div class="form-row">
+          <label>日付
+            <input type="date" id="a-date">
+          </label>
+          <label>開始時刻
+            <input type="time" id="a-start" value="09:00">
+          </label>
+          <label>見積(分)
+            <input type="number" id="a-est" min="1" max="600" value="25">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn solid" data-action="asg-save">保存する</button>
+          <button class="btn" data-action="asg-cancel">やめる</button>
+        </div>
+        <div class="btn-row hidden" id="asg-delete-row">
+          <button class="btn danger" data-action="asg-delete">この割り当てを取り消す</button>
         </div>
       </section>
     </div>

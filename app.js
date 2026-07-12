@@ -50,6 +50,10 @@ let renderedOverrun = false;
 let view = "today";
 let editingTaskId = null;
 let addChildOf = null;
+let calY = new Date().getFullYear();
+let calM = new Date().getMonth(); // 0始まり
+let selDate = todayKey();
+let editingAsgId = null;
 
 function load() {
   try {
@@ -356,6 +360,7 @@ function switchView(v) {
     el.classList.toggle("active", el.dataset.tab === v)
   );
   document.getElementById("view-today").classList.toggle("hidden", v !== "today");
+  document.getElementById("view-cal").classList.toggle("hidden", v !== "cal");
   document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
   renderAll();
 }
@@ -515,6 +520,8 @@ function renderAll() {
     renderedOverrun = !!(run && isOver(run));
     renderHero();
     renderTimeline();
+  } else if (view === "cal") {
+    renderCal();
   } else {
     renderPlan();
   }
@@ -644,6 +651,214 @@ function saveTaskForm() {
   save();
   renderPlan();
 }
+
+/* ---------- カレンダー(フェーズ3b) ---------- */
+const dkOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+const fmtH = (min) => (min >= 60 ? `${Math.round(min / 6) / 10}h` : `${min}分`);
+
+/* その日の項目:実際の割り当て + 周期タスクの自動予定(今日以降のみ) */
+function dayItems(dk) {
+  const real = state.assignments.filter((a) => a.date === dk);
+  const virt =
+    dk >= todayKey()
+      ? state.tasks
+          .filter(
+            (t) =>
+              t.type === "recurring" &&
+              occursOn(t, dk) &&
+              !real.some((a) => a.taskId === t.id)
+          )
+          .map((t) => ({
+            virtual: true,
+            taskId: t.id,
+            title: t.title,
+            start: t.defStart || "09:00",
+            estimateMin: t.estimateMin || 25,
+            status: "todo",
+          }))
+      : [];
+  return real.concat(virt).sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
+}
+const dayTotal = (dk) => dayItems(dk).reduce((s, i) => s + (i.estimateMin || 0), 0);
+
+function heatClass(min) {
+  if (min <= 0) return "";
+  if (min <= 120) return "heat1";
+  if (min <= 240) return "heat2";
+  if (min <= 360) return "heat3";
+  return "heat4";
+}
+
+function renderCal() {
+  document.getElementById("cal-month-label").textContent = `${calY}年${calM + 1}月`;
+  const first = new Date(calY, calM, 1);
+  const daysInMonth = new Date(calY, calM + 1, 0).getDate();
+  const lead = first.getDay();
+  const tk = todayKey();
+  let cells = [];
+  for (let i = 0; i < lead; i++) cells.push(`<div class="cal-cell blank"></div>`);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dk = dkOf(calY, calM, d);
+    const items = dayItems(dk);
+    const total = items.reduce((s, i) => s + (i.estimateMin || 0), 0);
+    const cls = [
+      "cal-cell",
+      heatClass(total),
+      dk === tk ? "today-cell" : "",
+      dk === selDate ? "sel" : "",
+      dk < tk ? "past" : "",
+    ].join(" ");
+    cells.push(`
+      <button class="${cls}" data-action="cal-day" data-date="${dk}">
+        <span class="cal-d">${d}</span>
+        ${total ? `<span class="cal-sum">${fmtH(total)}</span>` : ""}
+        ${items.length ? `<span class="cal-cnt">${items.length}件</span>` : ""}
+      </button>`);
+  }
+  document.getElementById("cal-grid").innerHTML = cells.join("");
+  renderDayDetail();
+}
+
+function renderDayDetail() {
+  const box = document.getElementById("day-detail");
+  const d = new Date(selDate + "T00:00:00");
+  const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+  const items = dayItems(selDate);
+  const total = items.reduce((s, i) => s + (i.estimateMin || 0), 0);
+  const jp = { todo: "未着手", doing: "作業中", done: "完了" };
+
+  const rows = items.length
+    ? items
+        .map((i) => {
+          const t = i.taskId ? taskById(i.taskId) : null;
+          const goal = t && t.goalId ? goalById(t.goalId) : null;
+          const chip = goal
+            ? `<span class="goal-chip" style="background:${goalColor(goal.id)}22;color:${goalColor(goal.id)}">${esc(goal.title)}</span>`
+            : "";
+          const actions = i.virtual
+            ? `<span class="virtual-tag">🔁 自動</span>
+               <button class="sbtn muted" data-action="asg-fix" data-task="${i.taskId}" data-date="${selDate}">時間調整</button>`
+            : `<button class="sbtn muted" data-action="asg-edit" data-id="${i.id}">編集</button>`;
+          return `
+          <div class="p-row">
+            <div class="p-main">
+              <div class="p-title">${chip}${esc(i.virtual ? i.title : asgTitle(i))}</div>
+              <div class="p-sub">${i.start} ・ 見積 ${i.estimateMin}分 ・ ${jp[i.status] || ""}${i.spentSec > 5 ? ` ・ 実績 ${fmtDur(i.spentSec)}` : ""}</div>
+            </div>
+            <div class="p-actions">${actions}</div>
+          </div>`;
+        })
+        .join("")
+    : `<div class="plan-empty">この日の割り当てはまだありません。</div>`;
+
+  box.innerHTML = `
+    <div class="plan-head">
+      <h2 class="section-label">${d.getMonth() + 1}月${d.getDate()}日(${youbi}) 合計 ${fmtH(total)}</h2>
+      <button class="sbtn" data-action="asg-add">+ 割り当て</button>
+    </div>
+    ${rows}`;
+}
+
+/* ---------- 割り当てフォーム ---------- */
+function fillAsgTaskSelect() {
+  const sel = document.getElementById("a-task");
+  const options = [];
+  const walk = (parentId, depth) => {
+    state.tasks
+      .filter((t) => (t.parentId || null) === parentId)
+      .forEach((t) => {
+        if (!(t.type === "single" && t.done)) {
+          options.push(`<option value="${t.id}">${"　".repeat(depth)}${esc(t.title)}</option>`);
+        }
+        walk(t.id, depth + 1);
+      });
+  };
+  walk(null, 0);
+  sel.innerHTML = `<option value="">(直接入力する)</option>` + options.join("");
+}
+
+function openAsgForm(dk, asg) {
+  editingAsgId = asg ? asg.id : null;
+  fillAsgTaskSelect();
+  document.getElementById("asg-form-title").textContent = asg ? "割り当てを編集" : "タスクを割り当て";
+  document.getElementById("a-task").value = asg ? asg.taskId || "" : "";
+  document.getElementById("a-title").value = asg && !asg.taskId ? asg.title : "";
+  document.getElementById("a-date").value = asg ? asg.date : dk;
+  document.getElementById("a-start").value = asg ? asg.start : "09:00";
+  document.getElementById("a-est").value = asg ? asg.estimateMin : 25;
+  document.getElementById("asg-delete-row").classList.toggle("hidden", !asg);
+  updateAsgTitleVisibility();
+  const form = document.getElementById("asg-form");
+  form.classList.remove("hidden");
+  form.scrollIntoView({ behavior: "smooth" });
+}
+
+function updateAsgTitleVisibility() {
+  const hasTask = !!document.getElementById("a-task").value;
+  document.getElementById("a-title").classList.toggle("hidden", hasTask);
+}
+
+function saveAsgForm() {
+  const taskId = document.getElementById("a-task").value || null;
+  const title = document.getElementById("a-title").value.trim();
+  if (!taskId && !title) return;
+  const date = document.getElementById("a-date").value || selDate;
+  const start = document.getElementById("a-start").value || "09:00";
+  const est = Math.max(1, Number(document.getElementById("a-est").value) || 25);
+
+  if (editingAsgId) {
+    const a = state.assignments.find((x) => x.id === editingAsgId);
+    if (a) {
+      a.taskId = taskId;
+      a.title = taskId ? (taskById(taskId) || {}).title || a.title : title;
+      a.date = date;
+      a.start = start;
+      a.estimateMin = est;
+    }
+  } else {
+    state.assignments.push({
+      id: uid("a"),
+      taskId,
+      title: taskId ? (taskById(taskId) || {}).title || "" : title,
+      date,
+      start,
+      estimateMin: est,
+      status: "todo",
+      spentSec: 0,
+      startedAt: null,
+    });
+  }
+  editingAsgId = null;
+  document.getElementById("asg-form").classList.add("hidden");
+  selDate = date;
+  const dd = new Date(date + "T00:00:00");
+  calY = dd.getFullYear();
+  calM = dd.getMonth();
+  save();
+  renderCal();
+}
+
+/* 周期タスクの自動予定を実体化して時刻を調整できるようにする */
+function fixVirtual(taskId, dk) {
+  const t = taskById(taskId);
+  if (!t) return;
+  const a = {
+    id: uid("a"),
+    taskId: t.id,
+    title: t.title,
+    date: dk,
+    start: t.defStart || "09:00",
+    estimateMin: t.estimateMin || 25,
+    status: "todo",
+    spentSec: 0,
+    startedAt: null,
+  };
+  state.assignments.push(a);
+  save();
+  renderCal();
+  openAsgForm(dk, a);
+}
+
 
 /* ---------- スプレッドシート同期 ---------- */
 const SYNC_URL_KEY = "hisho:sync:url";
@@ -810,6 +1025,42 @@ document.addEventListener("click", (e) => {
   /* タブ */
   else if (action === "tab") switchView(btn.dataset.tab);
 
+  /* カレンダー */
+  else if (action === "cal-prev") {
+    calM--;
+    if (calM < 0) { calM = 11; calY--; }
+    renderCal();
+  } else if (action === "cal-next") {
+    calM++;
+    if (calM > 11) { calM = 0; calY++; }
+    renderCal();
+  } else if (action === "cal-day") {
+    selDate = btn.dataset.date;
+    document.getElementById("asg-form").classList.add("hidden");
+    editingAsgId = null;
+    renderCal();
+  } else if (action === "asg-add") {
+    openAsgForm(selDate, null);
+  } else if (action === "asg-edit") {
+    const a = state.assignments.find((x) => x.id === id);
+    if (a) openAsgForm(a.date, a);
+  } else if (action === "asg-cancel") {
+    editingAsgId = null;
+    document.getElementById("asg-form").classList.add("hidden");
+  } else if (action === "asg-save") {
+    saveAsgForm();
+  } else if (action === "asg-delete") {
+    if (editingAsgId && confirm("この割り当てを取り消しますか?")) {
+      state.assignments = state.assignments.filter((x) => x.id !== editingAsgId);
+      editingAsgId = null;
+      document.getElementById("asg-form").classList.add("hidden");
+      save();
+      renderCal();
+    }
+  } else if (action === "asg-fix") {
+    fixVirtual(btn.dataset.task, btn.dataset.date);
+  }
+
   /* 目標 */
   else if (action === "goal-add") {
     document.getElementById("goal-form").classList.remove("hidden");
@@ -872,6 +1123,14 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind") updateRecVisibility();
+  if (e.target.id === "a-task") {
+    updateAsgTitleVisibility();
+    const t = e.target.value ? taskById(e.target.value) : null;
+    if (t && !editingAsgId) {
+      document.getElementById("a-start").value = t.defStart || "09:00";
+      document.getElementById("a-est").value = t.estimateMin || 25;
+    }
+  }
 });
 
 document.addEventListener("visibilitychange", async () => {
