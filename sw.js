@@ -1,5 +1,5 @@
 /* オフライン対応:アプリ本体をキャッシュし、圏外でも起動できるようにする */
-const CACHE = "hisho-v1";
+const CACHE = "hisho-v2";
 const ASSETS = [
   "./",
   "./index.html",

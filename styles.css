@@ -206,3 +206,16 @@ body.overrun { background: var(--alert-soft); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---------- 同期(フェーズ2) ---------- */
+.top-right { text-align: right; }
+.sync-status {
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 4px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.sync-status.err { color: var(--alert); }
+.f-label { display: block; font-size: 11.5px; color: var(--muted); margin-top: 10px; }
+.f-label input { margin-top: 4px; }

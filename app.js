@@ -52,10 +52,86 @@ function load() {
 function save() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    localStorage.setItem(DIRTY_KEY, "1");
   } catch (e) {
     console.error("保存に失敗しました", e);
   }
+  scheduleSync();
 }
+
+/* ---------- スプレッドシート同期(フェーズ2) ---------- */
+const SYNC_URL_KEY = "hisho:sync:url";
+const SYNC_TOKEN_KEY = "hisho:sync:token";
+const LAST_SYNC_KEY = "hisho:sync:last";
+const DIRTY_KEY = "hisho:sync:dirty";
+let syncTimer = null;
+let syncing = false;
+
+const syncConfigured = () => !!localStorage.getItem(SYNC_URL_KEY);
+
+function setSyncMsg(text, isErr) {
+  const el = document.getElementById("sync-status");
+  if (el) {
+    el.textContent = text;
+    el.classList.toggle("err", !!isErr);
+  }
+  const m = document.getElementById("settings-msg");
+  if (m && !document.getElementById("settings").classList.contains("hidden")) {
+    m.textContent = text;
+  }
+}
+
+function syncStatusLabel() {
+  if (!syncConfigured()) return "⚙ 同期を設定";
+  if (localStorage.getItem(DIRTY_KEY) === "1") return "未同期の変更あり";
+  const last = Number(localStorage.getItem(LAST_SYNC_KEY) || 0);
+  if (!last) return "まだ同期していません";
+  const d = new Date(last);
+  return `同期済み ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function scheduleSync() {
+  setSyncMsg(syncStatusLabel());
+  if (!syncConfigured()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => doSync(false), 4000);
+}
+
+async function doSync(manual) {
+  if (!syncConfigured()) {
+    if (manual) setSyncMsg("先にURLと合言葉を保存してください", true);
+    return;
+  }
+  if (!navigator.onLine) {
+    setSyncMsg("オフライン(接続後に自動同期します)");
+    return;
+  }
+  if (syncing) return;
+  syncing = true;
+  setSyncMsg("同期中…");
+  try {
+    const res = await fetch(localStorage.getItem(SYNC_URL_KEY), {
+      method: "POST",
+      body: JSON.stringify({
+        token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
+        tasks: state.tasks,
+      }),
+    });
+    const data = await res.json();
+    if (data && data.ok) {
+      localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+      localStorage.setItem(DIRTY_KEY, "0");
+      setSyncMsg(syncStatusLabel());
+    } else {
+      setSyncMsg(`同期エラー: ${(data && data.error) || "不明"}`, true);
+    }
+  } catch (e) {
+    setSyncMsg("同期に失敗しました(URLと通信環境を確認)", true);
+  }
+  syncing = false;
+}
+
+window.addEventListener("online", () => doSync(false));
 
 /* ---------- 参照ヘルパー ---------- */
 const todays = () =>
@@ -331,6 +407,31 @@ document.addEventListener("click", (e) => {
   } else if (action === "add-cancel") {
     document.getElementById("add-form").classList.add("hidden");
     document.getElementById("fab").classList.remove("hidden");
+  } else if (action === "settings-open") {
+    const panel = document.getElementById("settings");
+    panel.classList.remove("hidden");
+    document.getElementById("s-url").value = localStorage.getItem(SYNC_URL_KEY) || "";
+    document.getElementById("s-token").value = localStorage.getItem(SYNC_TOKEN_KEY) || "";
+    document.getElementById("settings-msg").textContent = "";
+    panel.scrollIntoView({ behavior: "smooth" });
+  } else if (action === "settings-close") {
+    document.getElementById("settings").classList.add("hidden");
+  } else if (action === "settings-save") {
+    const url = document.getElementById("s-url").value.trim();
+    const token = document.getElementById("s-token").value.trim();
+    if (url && !url.startsWith("https://script.google.com/")) {
+      document.getElementById("settings-msg").textContent =
+        "URLは https://script.google.com/ で始まるものを貼り付けてください";
+      return;
+    }
+    localStorage.setItem(SYNC_URL_KEY, url);
+    localStorage.setItem(SYNC_TOKEN_KEY, token);
+    document.getElementById("settings-msg").textContent = url
+      ? "保存しました。「今すぐ同期」で動作を確認できます"
+      : "同期設定を削除しました";
+    setSyncMsg(syncStatusLabel());
+  } else if (action === "sync-now") {
+    doSync(true);
   } else if (action === "add-confirm") {
     const title = document.getElementById("f-title").value;
     if (!title.trim()) return;
@@ -352,6 +453,8 @@ document.addEventListener("visibilitychange", async () => {
 /* ---------- 起動 ---------- */
 load();
 renderAll();
+setSyncMsg(syncStatusLabel());
+if (syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1") doSync(false);
 setInterval(tick, 1000);
 
 if ("serviceWorker" in navigator) {

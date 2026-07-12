@@ -22,8 +22,27 @@
         <div class="app-label">きょうの秘書</div>
         <div class="date" id="date-label"></div>
       </div>
-      <div class="stats" id="stats"></div>
+      <div class="top-right">
+        <div class="stats" id="stats"></div>
+        <div class="sync-status" id="sync-status" data-action="settings-open">⚙ 同期を設定</div>
+      </div>
     </header>
+
+    <section id="settings" class="add-form hidden">
+      <div class="form-title">スプレッドシート同期の設定</div>
+      <label class="f-label">Apps Script のURL
+        <input type="url" id="s-url" placeholder="https://script.google.com/macros/s/…/exec">
+      </label>
+      <label class="f-label">合言葉(Apps Script側に書いたものと同じ)
+        <input type="text" id="s-token" placeholder="例: himitsu123">
+      </label>
+      <div class="btn-row">
+        <button class="btn solid" data-action="settings-save">保存する</button>
+        <button class="btn" data-action="sync-now">今すぐ同期</button>
+        <button class="btn" data-action="settings-close">閉じる</button>
+      </div>
+      <div class="t-sub" id="settings-msg" style="margin-top:10px;"></div>
+    </section>
 
     <section id="hero"></section>
 
