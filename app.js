@@ -395,14 +395,35 @@ function releaseWake() {
   }
 }
 
+function createSingleTask(title, defStart, estimateMin) {
+  const t = {
+    id: uid("t"),
+    title: title.trim(),
+    parentId: null,
+    issueId: null,
+    type: "single",
+    estimateMin: Math.max(1, Number(estimateMin) || 25),
+    defStart: defStart || "09:00",
+    planStart: null,
+    planEnd: null,
+    recurrence: null,
+    reserveRule: null,
+    done: false,
+    createdDate: todayKey(),
+  };
+  state.tasks.push(t);
+  return t;
+}
+
 function addAdhoc(title, start, estimateMin) {
+  const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
   state.assignments.push({
     id: uid("a"),
-    taskId: null,
-    title: title.trim(),
+    taskId: t.id,
+    title: t.title,
     date: todayKey(),
     start,
-    estimateMin: Math.max(1, Number(estimateMin) || 25),
+    estimateMin: t.estimateMin,
     status: "todo",
     spentSec: 0,
     startedAt: null,
@@ -556,8 +577,7 @@ function renderTimeline() {
       const t = a.taskId ? taskById(a.taskId) : null;
       const rec = t && t.type === "recurring" ? " ・ 🔁" : "";
       const actions = done
-        ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>
-           <button class="sbtn muted" data-action="remove" data-id="${a.id}">削除</button>`
+        ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
         : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
            <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
       return `
@@ -578,6 +598,10 @@ function renderTimeline() {
 
 /* ---------- 描画:統合ガント(計画モード) ---------- */
 let showDone = localStorage.getItem("hisho:ui:showdone") === "1";
+let collapsedIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:collapsed") || "[]"));
+function saveCollapsed() {
+  localStorage.setItem("hisho:ui:collapsed", JSON.stringify([...collapsedIds]));
+}
 
 function renderGantt() {
   const box = document.getElementById("gantt");
@@ -940,12 +964,15 @@ function updateAsgTitleVisibility() {
 }
 
 function saveAsgForm() {
-  const taskId = document.getElementById("a-task").value || null;
+  let taskId = document.getElementById("a-task").value || null;
   const title = document.getElementById("a-title").value.trim();
   if (!taskId && !title) return;
   const date = document.getElementById("a-date").value || selDate;
   const start = document.getElementById("a-start").value || "09:00";
   const est = Math.max(1, Number(document.getElementById("a-est").value) || 25);
+  if (!taskId && !editingAsgId) {
+    taskId = createSingleTask(title, start, est).id; // 直接入力も原本を作る
+  }
 
   if (editingAsgId) {
     const a = state.assignments.find((x) => x.id === editingAsgId);
@@ -1051,18 +1078,27 @@ function renderPlan() {
       : "";
     const children = state.tasks.filter((c) => c.parentId === t.id);
     const marks = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
+    const isCollapsed = collapsedIds.has(t.id);
+    const caret = children.length
+      ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsed ? "▸" : "▾"}</button>`
+      : `<span class="caret ghost"></span>`;
+    const reopenBtn = t.type === "single" && t.done
+      ? `<button class="sbtn" data-action="task-reopen" data-id="${t.id}">戻す</button>`
+      : "";
     const row = `
       <div class="p-row" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
+        ${caret}
         <div class="p-main">
           <div class="p-title ${t.done ? "done-task" : ""}">${chip}${marks}${esc(t.title)}</div>
-          <div class="p-sub">${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件` : ""}</div>
+          <div class="p-sub">${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}</div>
         </div>
         <div class="p-actions">
+          ${reopenBtn}
           <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
           <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
         </div>
       </div>`;
-    return row + children.map((c) => renderNode(c, depth + 1)).join("");
+    return row + (isCollapsed ? "" : children.map((c) => renderNode(c, depth + 1)).join(""));
   };
   tree.innerHTML = state.tasks.filter((t) => !t.parentId).map((t) => renderNode(t, 0)).join("");
 }
@@ -1303,7 +1339,8 @@ function setSyncMsg(text, isErr) {
     el.classList.toggle("err", !!isErr);
   }
   const m = document.getElementById("settings-msg");
-  if (m && !document.getElementById("settings").classList.contains("hidden")) {
+  const ov = document.getElementById("settings-overlay");
+  if (m && ov && !ov.classList.contains("hidden")) {
     m.textContent = text;
   }
 }
@@ -1601,14 +1638,24 @@ document.addEventListener("click", (e) => {
 
   /* 設定 */
   else if (action === "settings-open") {
-    const panel = document.getElementById("settings");
-    panel.classList.remove("hidden");
+    document.getElementById("settings-overlay").classList.remove("hidden");
     document.getElementById("s-url").value = localStorage.getItem(SYNC_URL_KEY) || "";
     document.getElementById("s-token").value = localStorage.getItem(SYNC_TOKEN_KEY) || "";
     document.getElementById("settings-msg").textContent = "";
-    panel.scrollIntoView({ behavior: "smooth" });
   } else if (action === "settings-close") {
-    document.getElementById("settings").classList.add("hidden");
+    document.getElementById("settings-overlay").classList.add("hidden");
+  } else if (action === "g-help") {
+    document.getElementById("help-overlay").classList.remove("hidden");
+  } else if (action === "g-help-close") {
+    document.getElementById("help-overlay").classList.add("hidden");
+  } else if (action === "node-toggle") {
+    if (collapsedIds.has(id)) collapsedIds.delete(id);
+    else collapsedIds.add(id);
+    saveCollapsed();
+    renderPlan();
+  } else if (action === "task-reopen") {
+    const t = taskById(id);
+    if (t) { t.done = false; save(); renderPlan(); }
   } else if (action === "settings-save") {
     const url = document.getElementById("s-url").value.trim();
     const token = document.getElementById("s-token").value.trim();

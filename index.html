@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>今日の秘書</title>
   <meta name="description" content="今日やるべき作業を教えてくれる、あなた専用の秘書アプリ">
   <link rel="manifest" href="./manifest.webmanifest">
@@ -34,7 +34,9 @@
       <button class="tab" data-action="tab" data-tab="plan">課題</button>
     </nav>
 
-    <section id="settings" class="add-form hidden">
+    <div id="settings-overlay" class="overlay hidden">
+      <div class="overlay-backdrop" data-action="settings-close"></div>
+      <section id="settings" class="add-form modal">
       <div class="form-title">設定</div>
       <label class="f-label">Apps Script のURL
         <input type="url" id="s-url" placeholder="https://script.google.com/macros/s/…/exec">
@@ -51,7 +53,8 @@
         <button class="btn" data-action="settings-close">閉じる</button>
       </div>
       <div class="t-sub" id="settings-msg" style="margin-top:10px;"></div>
-    </section>
+      </section>
+    </div>
 
     <!-- ============ 今日 ============ -->
     <div id="view-today">
@@ -84,12 +87,28 @@
         <button class="sbtn" data-action="g-today">今日へ</button>
         <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
         <button class="sbtn muted" data-action="g-toggledone" id="g-donebtn">完了を表示</button>
+        <button class="sbtn muted" data-action="g-help">ⓘ 操作方法</button>
       </div>
       <div id="gantt"></div>
-      <div class="t-sub" style="margin:8px 2px 16px;">
-        マスをタップするたびに 空→●実施日→○予備日→空 と切り替わります(周期タスクはタップで自動予定のオン/オフ)。
-        ●や○は横にドラッグすると日付を移動できます。✓は完了、🔁は自動予定、点線の○は周期タスクの自動予備日。
-        日付や「見積合計」をタップすると下に詳細が開きます。
+
+
+      <div id="help-overlay" class="overlay hidden">
+        <div class="overlay-backdrop" data-action="g-help-close"></div>
+        <section class="add-form modal">
+          <div class="form-title">計画タブの操作方法</div>
+          <div class="help-list">
+            <div class="help-item"><span class="mark todo-m">●</span>実施日。マスをタップすると 空→●→○→空 の順に切り替わります</div>
+            <div class="help-item"><span class="mark res-m">○</span>予備日。見積合計と今日のタイムラインには含まれません</div>
+            <div class="help-item"><span class="mark done-m">✓</span>完了した実施日</div>
+            <div class="help-item"><span style="font-size:13px;">🔁</span>周期タスクの自動予定。タップでその日だけオン/オフ</div>
+            <div class="help-item"><span class="mark ares-m">○</span>周期タスクの自動予備日(タスク編集の予備日ルールで設定)</div>
+            <div class="help-item"><span style="font-size:13px;">↔</span>●や○は横にドラッグすると日付を移動できます</div>
+            <div class="help-item"><span style="font-size:13px;">▦</span>日付や見積合計をタップすると、下にその日の詳細が開きます</div>
+          </div>
+          <div class="btn-row">
+            <button class="btn solid" data-action="g-help-close">閉じる</button>
+          </div>
+        </section>
       </div>
 
       <section id="day-detail"></section>
