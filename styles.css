@@ -817,3 +817,66 @@ input[type="date"], input[type="time"] {
 .issue-tasks { margin-top: 10px; }
 .issue-tasks .p-row { background: #F7F9FA; }
 .issue-foot { gap: 8px; justify-content: flex-start; }
+
+/* ---------- フェーズ8:固定バー・並べ替えアニメーション ---------- */
+#fixedbars {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+}
+#sync-warn {
+  border: none;
+  background: #B0692B;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 8px 12px calc(8px);
+  padding-top: calc(8px + env(safe-area-inset-top));
+  cursor: pointer;
+  text-align: center;
+}
+#mini-timer {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+#sync-warn.hidden + #mini-timer { padding-top: calc(8px + env(safe-area-inset-top)); }
+#mini-timer.over { background: var(--alert); }
+
+/* 並べ替え:掴んだカードと挿入ライン */
+.p-row, .issue-card { transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; }
+.sorting {
+  opacity: .55;
+  transform: scale(1.02);
+  box-shadow: 0 10px 26px rgba(23,33,43,.28);
+  position: relative;
+  z-index: 5;
+}
+#drop-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  margin: 3px 6px;
+  transform-origin: left center;
+  animation: dropline .16s ease;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+@keyframes dropline {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
