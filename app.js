@@ -545,7 +545,7 @@ function renderHeader() {
     `${d.getMonth() + 1}月${d.getDate()}日(${youbi})${suffix}${lockMark}`;
   const tl = document.getElementById("timeline-label");
   if (tl) tl.textContent = viewDate === tk ? "今日のタイムライン" : "この日のタイムライン";
-  const list = dayList(viewDate);
+  const list = dayItems(viewDate);
   const done = list.filter((a) => a.status === "done").length;
   if (viewDate === tk) {
     const rest = list.filter((a) => a.status !== "done").reduce((s, a) => s + a.estimateMin, 0);
@@ -616,7 +616,7 @@ function renderHero() {
 
 function renderTimeline() {
   const box = document.getElementById("timeline");
-  const list = dayList(viewDate);
+  const list = dayItems(viewDate); // 自動予定(周期の仮想分)も含めて表示
   const cur = currentAsg();
   const editable = execEditable(viewDate);
   if (!list.length) {
@@ -627,15 +627,15 @@ function renderTimeline() {
   box.innerHTML = list
     .map((a) => {
       const done = a.status === "done";
-      const active = cur && cur.id === a.id;
+      const active = !a.virtual && cur && cur.id === a.id;
       const past = viewDate === todayKey() && !done && hmToMin(a.start) + a.estimateMin < nowMin();
-      const spent = a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
+      const spent = !a.virtual && a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
       const t = a.taskId ? taskById(a.taskId) : null;
-      const rec = t && t.type === "recurring" ? " ・ 🔁" : "";
+      const rec = a.virtual ? " ・ 🔁 自動" : t && t.type === "recurring" ? " ・ 🔁" : "";
       const crumb = a.taskId ? crumbOf(a.taskId) : "";
       const full = crumb ? `${crumb} › ${asgTitle(a)}` : asgTitle(a);
-      const actions = !editable
-        ? `<span class="virtual-tag">🔒</span>`
+      const actions = a.virtual || !editable
+        ? `<span class="virtual-tag">${a.virtual ? "🔁" : "🔒"}</span>`
         : done
           ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
           : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
@@ -1679,24 +1679,19 @@ function readablePayload() {
         done: t.type === "single" ? (t.done ? "完了" : "未完了") : "",
       };
     }),
-    daily: (() => {
-      const map = {};
-      state.assignments.forEach((a) => {
-        const m = map[a.date] || (map[a.date] = { date: a.date, plan: 0, actual: 0, total: 0, done: 0 });
-        m.plan += a.estimateMin || 0;
-        m.actual += (a.spentSec || 0) + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0);
-        m.total++;
-        if (a.status === "done") m.done++;
-      });
-      return Object.values(map).map((m) => ({
-        date: m.date,
-        plan: m.plan,
-        actual: Math.round(m.actual / 6) / 10,
-        total: m.total,
-        done: m.done,
-        closed: isClosed(m.date) ? "締" : "",
-      }));
-    })(),
+    worklog: state.assignments.map((a) => {
+      const sec = (a.spentSec || 0) + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0);
+      return {
+        id: a.id,
+        date: a.date,
+        start: a.start,
+        title: asgTitle(a),
+        plan: a.estimateMin || 0,
+        actual: Math.round(sec / 6) / 10,
+        status: a.status,
+        closed: isClosed(a.date) ? "締" : "",
+      };
+    }),
     assignments: state.assignments.map((a) => ({
       id: a.id,
       date: a.date,
@@ -1823,7 +1818,7 @@ function updateMiniTimer() {
   const run = runningAsg();
   let show = false;
   if (run) {
-    if (view !== "today") {
+    if (view !== "today" || viewDate !== todayKey()) {
       show = true;
     } else {
       const hero = document.getElementById("hero");
