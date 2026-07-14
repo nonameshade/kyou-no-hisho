@@ -145,10 +145,7 @@ function save() {
 /* ---------- 参照ヘルパー ---------- */
 const taskById = (id) => state.tasks.find((t) => t.id === id) || null;
 const issueById = (id) => state.issues.find((g) => g.id === id) || null;
-const issueColor = (id) => {
-  const i = state.issues.findIndex((g) => g.id === id);
-  return i >= 0 ? ISSUE_COLORS[i % ISSUE_COLORS.length] : "#0E7C66";
-};
+const issueColor = () => "#0E7C66"; // 課題ごとの色分けは廃止(並べ替えで色が変わるのを防ぐ)
 const asgTitle = (a) => {
   const t = a.taskId ? taskById(a.taskId) : null;
   return t ? t.title : a.title;
@@ -841,6 +838,33 @@ function showNameTip(text, x, y) {
 /* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
 let sortDrag = null;
 
+function sortCandidates(d) {
+  if (d.type === "issue") {
+    return [...document.querySelectorAll(".issue-card[data-issue]")].filter(
+      (el) => el.dataset.issue !== d.id
+    );
+  }
+  const dragged = taskById(d.id);
+  if (!dragged) return [];
+  return [...document.querySelectorAll(".p-row[data-task]")].filter((el) => {
+    if (el.dataset.task === d.id) return false;
+    const t = taskById(el.dataset.task);
+    if (!t) return false;
+    if ((t.parentId || null) !== (dragged.parentId || null)) return false;
+    if (!dragged.parentId && (t.issueId || null) !== (dragged.issueId || null)) return false;
+    return true;
+  });
+}
+
+function getDropLine() {
+  let l = document.getElementById("drop-line");
+  if (!l) {
+    l = document.createElement("div");
+    l.id = "drop-line";
+  }
+  return l;
+}
+
 document.addEventListener("pointerdown", (e) => {
   const h = e.target.closest(".drag-h");
   if (!h) return;
@@ -853,7 +877,7 @@ document.addEventListener("pointerdown", (e) => {
     el: issueEl || taskEl,
     py: e.clientY,
     moved: false,
-    hint: null,
+    idx: null,
   };
 });
 
@@ -861,61 +885,68 @@ document.addEventListener("pointermove", (e) => {
   if (!sortDrag) return;
   if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 8) {
     sortDrag.moved = true;
-    sortDrag.el.classList.add("sorting");
+    sortDrag.el.classList.add("sorting"); // 掴めた合図(浮き上がるアニメーション)
+    try { if (navigator.vibrate) navigator.vibrate(15); } catch (err) {}
   }
   if (!sortDrag.moved) return;
-  const sel = sortDrag.type === "issue" ? "[data-issue]" : "[data-task]";
-  const under = document.elementFromPoint(e.clientX, e.clientY);
-  const target = under ? under.closest(sel) : null;
-  if (sortDrag.hint && sortDrag.hint !== target) sortDrag.hint.classList.remove("drop-hint");
-  if (target && target !== sortDrag.el) {
-    target.classList.add("drop-hint");
-    sortDrag.hint = target;
+  const cands = sortCandidates(sortDrag);
+  if (!cands.length) return;
+  /* ポインタ位置と各要素の中央を比べて挿入位置を決める(上下で対称) */
+  let idx = 0;
+  cands.forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.top + r.height / 2 < e.clientY) idx++;
+  });
+  sortDrag.idx = idx;
+  const line = getDropLine();
+  if (idx < cands.length) {
+    cands[idx].parentNode.insertBefore(line, cands[idx]);
+  } else {
+    const last = cands[cands.length - 1];
+    last.parentNode.insertBefore(line, last.nextSibling);
   }
 });
 
-document.addEventListener("pointerup", (e) => {
+document.addEventListener("pointerup", () => {
   if (!sortDrag) return;
   const d = sortDrag;
   sortDrag = null;
   d.el.classList.remove("sorting");
-  if (d.hint) d.hint.classList.remove("drop-hint");
-  if (!d.moved || !d.hint) return;
+  const line = document.getElementById("drop-line");
+  const cands = sortCandidates(d);
+  if (line) line.remove();
+  if (!d.moved) return;
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
-
-  const rect = d.hint.getBoundingClientRect();
-  const after = e.clientY > rect.top + rect.height / 2;
+  if (d.idx === null || !cands.length) return;
 
   if (d.type === "issue") {
-    const targetId = d.hint.dataset.issue;
-    if (targetId === d.id) return;
     const dragged = issueById(d.id);
-    state.issues = state.issues.filter((g) => g.id !== d.id);
-    let idx = state.issues.findIndex((g) => g.id === targetId);
-    if (after) idx++;
-    state.issues.splice(idx, 0, dragged);
+    if (!dragged) return;
+    const order = cands.map((el) => el.dataset.issue); // ドラッグ中の要素を除いた並び
+    order.splice(d.idx, 0, d.id);
+    state.issues = order.map((id) => issueById(id)).filter(Boolean);
     save();
     renderPlan();
   } else {
-    const targetId = d.hint.dataset.task;
-    if (targetId === d.id) return;
     const dragged = taskById(d.id);
-    const target = taskById(targetId);
-    if (!dragged || !target) return;
-    const sameParent = (dragged.parentId || null) === (target.parentId || null);
-    const sameIssue = (dragged.issueId || null) === (target.issueId || null);
-    if (!sameParent || (!dragged.parentId && !sameIssue)) return; // 同じ階層・同じ課題内のみ
+    if (!dragged) return;
     state.tasks = state.tasks.filter((t) => t.id !== d.id);
-    let idx = state.tasks.findIndex((t) => t.id === targetId);
-    if (after) idx++;
-    state.tasks.splice(idx, 0, dragged);
+    if (d.idx < cands.length) {
+      const before = taskById(cands[d.idx].dataset.task);
+      const pos = state.tasks.indexOf(before);
+      state.tasks.splice(pos, 0, dragged);
+    } else {
+      const lastSib = taskById(cands[cands.length - 1].dataset.task);
+      const pos = state.tasks.indexOf(lastSib) + 1;
+      state.tasks.splice(pos, 0, dragged);
+    }
     save();
     renderPlan();
   }
 });
 
-/* ---------- マークのドラッグ移動 ---------- */
+/* ---------- マークのドラッグ移動 ---------- *//* ---------- マークのドラッグ移動 ---------- */
 let drag = null;
 let suppressClick = false;
 
@@ -1471,7 +1502,22 @@ let syncing = false;
 
 const syncConfigured = () => !!localStorage.getItem(SYNC_URL_KEY);
 
+function syncFixedOffset() {
+  const bars = document.getElementById("fixedbars");
+  const wrap = document.querySelector(".wrap");
+  if (bars && wrap) wrap.style.marginTop = bars.offsetHeight ? `${bars.offsetHeight}px` : "";
+}
+
+function updateSyncWarn() {
+  const el = document.getElementById("sync-warn");
+  if (!el) return;
+  const show = syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1";
+  el.classList.toggle("hidden", !show);
+  syncFixedOffset();
+}
+
 function setSyncMsg(text, isErr) {
+  updateSyncWarn();
   const el = document.getElementById("sync-status");
   if (el) {
     el.textContent = text;
@@ -1574,6 +1620,7 @@ async function pushSync(manual) {
   try {
     const res = await fetch(localStorage.getItem(SYNC_URL_KEY), {
       method: "POST",
+      keepalive: true,
       body: JSON.stringify({
         token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
         updatedAt: state.updatedAt || 0,
@@ -1645,22 +1692,48 @@ async function forceUpdate() {
   location.reload();
 }
 
+/* ---------- ミニタイマー(タイマーが見えないときの上部バナー) ---------- */
+function updateMiniTimer() {
+  const bar = document.getElementById("mini-timer");
+  if (!bar) return;
+  const run = runningAsg();
+  let show = false;
+  if (run) {
+    if (view !== "today") {
+      show = true;
+    } else {
+      const hero = document.getElementById("hero");
+      const r = hero ? hero.getBoundingClientRect() : null;
+      show = r ? r.bottom < 70 : true;
+    }
+  }
+  if (show) {
+    const over = isOver(run);
+    bar.classList.toggle("over", over);
+    bar.textContent = `${over ? "⚠" : "▶"} ${asgTitle(run)} — ${fmtDur(elapsedSec(run))} / ${run.estimateMin}:00`;
+  }
+  const wasHidden = bar.classList.contains("hidden");
+  bar.classList.toggle("hidden", !show);
+  if (wasHidden !== !show) syncFixedOffset();
+}
+
 /* ---------- 毎秒の処理 ---------- */
 function tick() {
-  if (view !== "today") return;
-  const cur = currentAsg();
-  const curId = cur ? cur.id : null;
   const run = runningAsg();
   const over = !!(run && isOver(run));
-  if (curId !== renderedCurrentId || over !== renderedOverrun) {
-    renderAll();
-  } else {
-    updateTimerVisuals(cur);
-  }
+  updateMiniTimer();
   if (run && over && Date.now() - lastBeep > 60000) {
     lastBeep = Date.now();
     beep();
     notify("見積時間を超過しました", `「${asgTitle(run)}」を切り上げるか、続行するか選んでください`);
+  }
+  if (view !== "today") return;
+  const cur = currentAsg();
+  const curId = cur ? cur.id : null;
+  if (curId !== renderedCurrentId || over !== renderedOverrun) {
+    renderAll();
+  } else {
+    updateTimerVisuals(cur);
   }
 }
 
@@ -1695,6 +1768,10 @@ document.addEventListener("click", (e) => {
 
   /* タブ */
   else if (action === "tab") switchView(btn.dataset.tab);
+  else if (action === "mini-jump") {
+    switchView("today");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   /* ガント */
   else if (action === "g-prev") { gStart = addDays(gStart, -14); renderGantt(); }
@@ -1837,6 +1914,14 @@ document.addEventListener("change", (e) => {
 });
 
 document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") {
+    /* 閉じる・切り替えの瞬間、未送信があれば即時送信(keepaliveで送信は継続される) */
+    if (syncConfigured() && navigator.onLine && localStorage.getItem(DIRTY_KEY) === "1") {
+      clearTimeout(syncTimer);
+      pushSync(false);
+    }
+    return;
+  }
   if (document.visibilityState === "visible") {
     if (runningAsg() && navigator.wakeLock && !wakeLock) {
       try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
@@ -1853,6 +1938,7 @@ materializeToday();
 document.body.dataset.view = "today";
 renderAll();
 setSyncMsg(syncStatusLabel());
+updateSyncWarn();
 fullSync(false);
 setInterval(tick, 1000);
 
