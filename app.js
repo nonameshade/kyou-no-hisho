@@ -52,7 +52,7 @@ const uid = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}
 const ISSUE_COLORS = ["#0E7C66", "#3D5A9E", "#B0692B", "#8A4E9E", "#3F7A3F", "#A8455C"];
 
 /* ---------- 状態 ---------- */
-let state = { v: 4, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [] };
+let state = { v: 5, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
 let wakeLock = null;
 let lastBeep = 0;
 let renderedCurrentId = null;
@@ -62,6 +62,7 @@ let editingTaskId = null;
 let editingIssueId = null;
 let editingAsgId = null;
 let selDate = todayKey();
+let viewDate = todayKey(); // 今日タブで表示中の日付
 let gStart = addDays(todayKey(), -7);
 const G_DAYS = 42;
 const G_COLW = 26;
@@ -73,7 +74,7 @@ function load() {
   } catch (e) {
     console.error("読み込みに失敗しました", e);
   }
-  if (!state || typeof state !== "object") state = { v: 4, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [] };
+  if (!state || typeof state !== "object") state = { v: 5, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
   migrate();
 }
 
@@ -119,11 +120,16 @@ function migrate() {
     state.reserves = [];
     state.v = 4;
   }
+  if (state.v < 5) {
+    state.closedDates = [];
+    state.v = 5;
+  }
   if (!Array.isArray(state.issues)) state.issues = [];
   if (!Array.isArray(state.tasks)) state.tasks = [];
   if (!Array.isArray(state.assignments)) state.assignments = [];
   if (!Array.isArray(state.skips)) state.skips = [];
   if (!Array.isArray(state.reserves)) state.reserves = [];
+  if (!Array.isArray(state.closedDates)) state.closedDates = [];
   if (!state.updatedAt) state.updatedAt = 0;
 }
 
@@ -151,13 +157,31 @@ const asgTitle = (a) => {
   return t ? t.title : a.title;
 };
 const hasSkip = (taskId, dk) => state.skips.some((s) => s.taskId === taskId && s.date === dk);
+const isClosed = (dk) => state.closedDates.includes(dk);
+/* 実行系の編集可否:未来は不可・締め済みも不可 */
+const execEditable = (dk) => dk <= todayKey() && !isClosed(dk);
 
-const todays = () =>
+function crumbOf(taskId) {
+  let t = taskId ? taskById(taskId) : null;
+  if (!t) return "";
+  const parts = [];
+  let p = t.parentId ? taskById(t.parentId) : null;
+  while (p) {
+    parts.unshift(p.title);
+    p = p.parentId ? taskById(p.parentId) : null;
+  }
+  return parts.join(" › ");
+}
+
+const dayList = (dk) =>
   state.assignments
-    .filter((a) => a.date === todayKey())
+    .filter((a) => a.date === dk)
     .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
 
-const runningAsg = () => todays().find((a) => a.status === "doing") || null;
+const todays = () => dayList(viewDate);
+
+/* 日跨ぎで継続中の作業も拾うため、全日付から検索(前日の作業とみなす) */
+const runningAsg = () => state.assignments.find((a) => a.status === "doing") || null;
 
 const elapsedSec = (a) =>
   a.spentSec + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0);
@@ -165,7 +189,8 @@ const elapsedSec = (a) =>
 const isOver = (a) => elapsedSec(a) > a.estimateMin * 60;
 
 function currentAsg() {
-  const list = todays();
+  if (viewDate !== todayKey()) return null;
+  const list = dayList(todayKey());
   return (
     runningAsg() ||
     list.filter((a) => a.status !== "done" && hmToMin(a.start) <= nowMin()).pop() ||
@@ -205,6 +230,7 @@ function recurrenceLabel(task) {
 
 function materializeToday() {
   const dk = todayKey();
+  if (isClosed(dk)) return;
   let changed = false;
   state.tasks
     .filter((t) => t.type === "recurring" && occursOn(t, dk) && !hasSkip(t.id, dk))
@@ -323,6 +349,8 @@ function notify(title, body) {
 
 /* ---------- 今日:操作 ---------- */
 async function startAsg(id) {
+  const target = state.assignments.find((x) => x.id === id);
+  if (!target || !execEditable(target.date)) return;
   try {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -345,6 +373,8 @@ async function startAsg(id) {
 }
 
 function pauseAsg(id) {
+  const target = state.assignments.find((x) => x.id === id);
+  if (!target || !execEditable(target.date)) return;
   state.assignments = state.assignments.map((a) =>
     a.id === id ? { ...a, status: "todo", spentSec: elapsedSec(a), startedAt: null } : a
   );
@@ -354,6 +384,8 @@ function pauseAsg(id) {
 }
 
 function finishAsg(id) {
+  const target0 = state.assignments.find((x) => x.id === id);
+  if (!target0 || !execEditable(target0.date)) return;
   state.assignments = state.assignments.map((a) =>
     a.id === id ? { ...a, status: "done", spentSec: elapsedSec(a), startedAt: null } : a
   );
@@ -369,6 +401,8 @@ function finishAsg(id) {
 
 /* 完了の取り消し */
 function reopenAsg(id) {
+  const target = state.assignments.find((x) => x.id === id);
+  if (!target || !execEditable(target.date)) return;
   const a = state.assignments.find((x) => x.id === id);
   if (!a) return;
   a.status = "todo";
@@ -414,12 +448,13 @@ function createSingleTask(title, defStart, estimateMin) {
 }
 
 function addAdhoc(title, start, estimateMin) {
+  if (!execEditable(viewDate)) return;
   const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
   state.assignments.push({
     id: uid("a"),
     taskId: t.id,
     title: t.title,
-    date: todayKey(),
+    date: viewDate,
     start,
     estimateMin: t.estimateMin,
     status: "todo",
@@ -501,26 +536,51 @@ function switchView(v) {
 
 /* ---------- 描画:共通ヘッダー ---------- */
 function renderHeader() {
-  const d = new Date();
+  const tk = todayKey();
+  const d = new Date(viewDate + "T00:00:00");
   const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-  document.getElementById("date-label").textContent = `${d.getMonth() + 1}月${d.getDate()}日(${youbi})`;
-  const list = todays();
-  const rest = list.filter((a) => a.status !== "done").reduce((s, a) => s + a.estimateMin, 0);
+  const lockMark = isClosed(viewDate) ? " 🔒" : "";
+  const suffix = viewDate === tk ? "" : viewDate < tk ? "(過去)" : "(未来)";
+  document.getElementById("date-label").textContent =
+    `${d.getMonth() + 1}月${d.getDate()}日(${youbi})${suffix}${lockMark}`;
+  const tl = document.getElementById("timeline-label");
+  if (tl) tl.textContent = viewDate === tk ? "今日のタイムライン" : "この日のタイムライン";
+  const list = dayList(viewDate);
   const done = list.filter((a) => a.status === "done").length;
-  document.getElementById("stats").innerHTML =
-    `<div>残り見積 ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
+  if (viewDate === tk) {
+    const rest = list.filter((a) => a.status !== "done").reduce((s, a) => s + a.estimateMin, 0);
+    document.getElementById("stats").innerHTML =
+      `<div>残り見積 ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
+  } else {
+    const plan = list.reduce((s, a) => s + (a.estimateMin || 0), 0);
+    const actual = list.reduce((s, a) => s + (a.spentSec || 0), 0);
+    document.getElementById("stats").innerHTML =
+      `<div>予定 ${fmtH(plan)} ・ 実績 ${fmtH(Math.round(actual / 60))}</div><div>完了 ${done} / ${list.length}</div>`;
+  }
 }
 
 /* ---------- 描画:今日 ---------- */
 function renderHero() {
   const hero = document.getElementById("hero");
+  const tk = todayKey();
+  if (viewDate !== tk) {
+    const closed = isClosed(viewDate);
+    const msg = viewDate > tk
+      ? "🔒 未来の日付は閲覧のみです。<br><small>割り当ての変更は計画タブで行えます</small>"
+      : closed
+        ? "🔒 この日は締め済みです。<br><small>編集するには下の「締めを解除」を押してください</small>"
+        : "過去の日付です。<br><small>締め前のため、完了の修正やタスク追加ができます</small>";
+    hero.innerHTML = `<div class="empty-card">${msg}</div>`;
+    document.body.classList.remove("overrun");
+    return;
+  }
   const cur = currentAsg();
   if (!cur) {
     const has = todays().length > 0;
     hero.innerHTML = `<div class="empty-card">${
       has
         ? "今日のタスクはすべて完了しました 🎉<br><small>おつかれさまでした</small>"
-        : "今日のタスクはまだありません。<br><small>「+ タスクを追加」か、ガントで日付マスをタップして割り当てましょう</small>"
+        : "今日のタスクはまだありません。<br><small>「+ タスクを追加」か、計画で日付マスをタップして割り当てましょう</small>"
     }</div>`;
     document.body.classList.remove("overrun");
     return;
@@ -530,12 +590,7 @@ function renderHero() {
   const over = mine && isOver(cur);
   document.body.classList.toggle("overrun", !!over);
 
-  const t = cur.taskId ? taskById(cur.taskId) : null;
-  const issue = t && t.issueId ? issueById(t.issueId) : null;
-  const chip = issue
-    ? `<span class="goal-chip" style="background:${issueColor(issue.id)}22;color:${issueColor(issue.id)}">${esc(issue.title)}</span>`
-    : "";
-
+  const crumb = cur.taskId ? crumbOf(cur.taskId) : "";
   const eyebrow = over ? "⚠ 見積時間を超過しています" : mine ? "作業中" : "次にやること";
   const buttons = mine
     ? `<button class="btn solid" data-action="finish" data-id="${cur.id}">完了にする</button>
@@ -545,7 +600,8 @@ function renderHero() {
   hero.innerHTML = `
     <div class="hero ${over ? "overrun" : ""}">
       <div class="hero-eyebrow">${eyebrow}</div>
-      <div class="hero-title">${chip}${esc(asgTitle(cur))}</div>
+      ${crumb ? `<div class="hero-crumb">${esc(crumb)} ›</div>` : ""}
+      <div class="hero-title">${esc(asgTitle(cur))}</div>
       <div class="hero-meta">${cur.start} 開始予定 ・ 見積 ${cur.estimateMin}分</div>
       <div class="timer-row">
         <div class="timer-digits" id="timer-digits">${fmtDur(elapsedSec(cur))}</div>
@@ -560,31 +616,37 @@ function renderHero() {
 
 function renderTimeline() {
   const box = document.getElementById("timeline");
-  const list = todays();
+  const list = dayList(viewDate);
   const cur = currentAsg();
+  const editable = execEditable(viewDate);
   if (!list.length) {
-    box.innerHTML = `<div class="t-sub" style="padding:8px 0 24px;">タスクを追加するとここに表示されます</div>`;
+    box.innerHTML = `<div class="t-sub" style="padding:8px 0 24px;">この日の割り当てはありません</div>`;
+    renderDayClose();
     return;
   }
   box.innerHTML = list
     .map((a) => {
       const done = a.status === "done";
       const active = cur && cur.id === a.id;
-      const past = !done && hmToMin(a.start) + a.estimateMin < nowMin();
+      const past = viewDate === todayKey() && !done && hmToMin(a.start) + a.estimateMin < nowMin();
       const spent = a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
       const t = a.taskId ? taskById(a.taskId) : null;
       const rec = t && t.type === "recurring" ? " ・ 🔁" : "";
-      const actions = done
-        ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
-        : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
-           <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
+      const crumb = a.taskId ? crumbOf(a.taskId) : "";
+      const full = crumb ? `${crumb} › ${asgTitle(a)}` : asgTitle(a);
+      const actions = !editable
+        ? `<span class="virtual-tag">🔒</span>`
+        : done
+          ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
+          : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
+             <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""}">
           <div class="t-time">${a.start}</div>
           <div class="t-dot"></div>
           <div class="t-card">
             <div class="t-main">
-              <div class="t-title">${esc(asgTitle(a))}</div>
+              <div class="t-title" data-action="g-showname" data-name="${esc(full)}">${crumb ? `<span class="crumb">${esc(crumb)} › </span>` : ""}${esc(asgTitle(a))}</div>
               <div class="t-sub">見積 ${a.estimateMin}分${spent}${rec}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
             </div>
             <div class="t-actions">${actions}</div>
@@ -592,9 +654,24 @@ function renderTimeline() {
         </div>`;
     })
     .join("");
+  renderDayClose();
 }
 
-/* ---------- 描画:統合ガント(計画モード) ---------- */
+/* ---------- 締め(日次ロック) ---------- */
+function renderDayClose() {
+  const box = document.getElementById("day-close");
+  if (!box) return;
+  const tk = todayKey();
+  if (viewDate > tk) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = isClosed(viewDate)
+    ? `<div class="btn-row" style="margin-top:20px;"><button class="btn" data-action="day-open">🔓 この日の締めを解除</button></div>`
+    : `<div class="btn-row" style="margin-top:20px;"><button class="btn danger" data-action="day-close">🔒 この日を締める</button></div>`;
+}
+
+/* ---------- 描画:統合ガント(計画モード) ---------- *//* ---------- 描画:統合ガント(計画モード) ---------- */
 let showDone = localStorage.getItem("hisho:ui:showdone") === "1";
 let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
 function saveOpenIssues() {
@@ -632,6 +709,11 @@ function renderGantt() {
   const trackW = G_DAYS * G_COLW;
   const colX = (i) => i * G_COLW;
   const tdIdx = days.indexOf(tk);
+  const lockCols = days
+    .map((dk, i) =>
+      isClosed(dk) ? `<div class="g-lock-col" style="left:${colX(i)}px;width:${G_COLW}px"></div>` : ""
+    )
+    .join("");
 
   const weCols = days
     .map((dk, i) => {
@@ -651,7 +733,7 @@ function renderGantt() {
       const mon = d.getDate() === 1 || i === 0
         ? `<span class="g-mon2">${d.getMonth() + 1}月</span>`
         : "";
-      return `<button class="g-hcell2 ${wd === 0 || wd === 6 ? "we" : ""} ${dk === tk ? "td" : ""} ${dk === selDate ? "sel" : ""}"
+      return `<button class="g-hcell2 ${wd === 0 || wd === 6 ? "we" : ""} ${dk === tk ? "td" : ""} ${dk === selDate ? "sel" : ""} ${isClosed(dk) ? "locked" : ""}"
         style="left:${colX(i)}px;width:${G_COLW}px" data-action="g-selday" data-date="${dk}">
         ${mon}${d.getDate()}</button>`;
     })
@@ -724,8 +806,8 @@ function renderGantt() {
               } else if (autoRes) {
                 mark = `<span class="mark ares-m">○</span>`;
               }
-              if (t.type === "summary") {
-                return `<div class="g-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`;
+              if (t.type === "summary" || isClosed(dk)) {
+                return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${t.type === "summary" ? "" : mark}</div>`;
               }
               return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
                 data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
@@ -733,15 +815,20 @@ function renderGantt() {
             .join("");
 
           const rec = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
+          const isCollapsedG = collapsedIds.has(t.id);
+          const caretG = children.length
+            ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsedG ? "▸" : "▾"}</button>`
+            : `<span class="caret ghost"></span>`;
           sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px"
-                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">
+            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${4 + depth * 14}px"
+                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(crumbOf(t.id) ? crumbOf(t.id) + " › " + t.title : t.title)}">
+              ${caretG}
               <span class="g-name">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
             </div>`);
-          trackRows.push(`<div class="g-trow">${weCols}${todayLine}${bar}${cells}</div>`);
+          trackRows.push(`<div class="g-trow">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
         }
-        walk(t.id, depth + 1);
+        if (!collapsedIds.has(t.id)) walk(t.id, depth + 1);
       });
   };
   walk(null, 0);
@@ -756,7 +843,7 @@ function renderGantt() {
       <div class="g-scroll">
         <div style="width:${trackW}px">
           <div class="g-trow g-sh">${hcells}</div>
-          <div class="g-trow g-ss">${sumCells}</div>
+          <div class="g-trow g-ss">${lockCols}${sumCells}</div>
           ${trackRows.join("")}
         </div>
       </div>
@@ -772,6 +859,7 @@ function renderGantt() {
 
 /* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
+  if (isClosed(dk)) return;
   const t = taskById(taskId);
   if (!t || t.type === "summary") return;
   const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
@@ -817,7 +905,7 @@ function toggleCell(taskId, dk) {
 }
 
 /* ---------- タスク名の全体表示チップ ---------- */
-function showNameTip(text, x, y) {
+function showNameTip(text, anchor) {
   let tip = document.getElementById("name-tip");
   if (!tip) {
     tip = document.createElement("div");
@@ -826,11 +914,12 @@ function showNameTip(text, x, y) {
   }
   tip.textContent = text;
   tip.style.display = "block";
-  tip.style.left = "0px";
-  tip.style.top = "0px";
+  /* タップした行の真下に、ページ座標で固定(スクロールに追随し、ずれが蓄積しない) */
+  const r = anchor.getBoundingClientRect();
   const w = tip.offsetWidth;
-  tip.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`;
-  tip.style.top = `${y + 16}px`;
+  const x = Math.max(8 + window.scrollX, Math.min(r.left + window.scrollX, window.scrollX + window.innerWidth - w - 8));
+  tip.style.left = `${x}px`;
+  tip.style.top = `${r.bottom + window.scrollY + 6}px`;
   clearTimeout(showNameTip._t);
   showNameTip._t = setTimeout(() => { tip.style.display = "none"; }, 2500);
 }
@@ -879,16 +968,19 @@ document.addEventListener("pointerdown", (e) => {
     moved: false,
     idx: null,
   };
+  sortDrag.el.classList.add("grabbed"); // 掴めた合図(押した瞬間に浮く)
+  try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
 });
 
 document.addEventListener("pointermove", (e) => {
   if (!sortDrag) return;
-  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 8) {
+  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 6) {
     sortDrag.moved = true;
-    sortDrag.el.classList.add("sorting"); // 掴めた合図(浮き上がるアニメーション)
-    try { if (navigator.vibrate) navigator.vibrate(15); } catch (err) {}
+    sortDrag.el.classList.add("sorting");
   }
   if (!sortDrag.moved) return;
+  /* カードがポインタに追随して動く */
+  sortDrag.el.style.transform = `translateY(${e.clientY - sortDrag.py}px) scale(1.02)`;
   const cands = sortCandidates(sortDrag);
   if (!cands.length) return;
   /* ポインタ位置と各要素の中央を比べて挿入位置を決める(上下で対称) */
@@ -912,6 +1004,8 @@ document.addEventListener("pointerup", () => {
   const d = sortDrag;
   sortDrag = null;
   d.el.classList.remove("sorting");
+  d.el.classList.remove("grabbed");
+  d.el.style.transform = "";
   const line = document.getElementById("drop-line");
   const cands = sortCandidates(d);
   if (line) line.remove();
@@ -999,6 +1093,7 @@ document.addEventListener("pointerup", () => {
     setTimeout(() => { suppressClick = false; }, 80);
     if (d.overIdx !== null && d.overIdx !== d.fromIdx) {
       const nd = addDays(gStart, d.overIdx);
+      if (isClosed(nd)) return;
       if (d.kind === "asg") {
         const a = state.assignments.find((x) => x.id === d.id);
         if (a) a.date = nd;
@@ -1029,10 +1124,13 @@ function renderDayDetail() {
           const chip = issue
             ? `<span class="goal-chip" style="background:${issueColor(issue.id)}22;color:${issueColor(issue.id)}">${esc(issue.title)}</span>`
             : "";
-          const actions = i.virtual
-            ? `<span class="virtual-tag">🔁 自動</span>
-               <button class="sbtn muted" data-action="asg-fix" data-task="${i.taskId}" data-date="${selDate}">時間調整</button>`
-            : `<button class="sbtn muted" data-action="asg-edit" data-id="${i.id}">編集</button>`;
+          const lockedDay = isClosed(selDate);
+          const actions = lockedDay
+            ? `<span class="virtual-tag">🔒</span>`
+            : i.virtual
+              ? `<span class="virtual-tag">🔁 自動</span>
+                 <button class="sbtn muted" data-action="asg-fix" data-task="${i.taskId}" data-date="${selDate}">時間調整</button>`
+              : `<button class="sbtn muted" data-action="asg-edit" data-id="${i.id}">編集</button>`;
           return `
           <div class="p-row">
             <div class="p-main">
@@ -1063,8 +1161,8 @@ function renderDayDetail() {
 
   box.innerHTML = `
     <div class="plan-head">
-      <h2 class="section-label">${d.getMonth() + 1}月${d.getDate()}日(${youbi}) 合計 ${fmtH(total)}</h2>
-      <button class="sbtn" data-action="asg-add">+ 割り当て</button>
+      <h2 class="section-label">${d.getMonth() + 1}月${d.getDate()}日(${youbi}) 合計 ${fmtH(total)}${isClosed(selDate) ? " 🔒締め済み" : ""}</h2>
+      ${isClosed(selDate) ? "" : `<button class="sbtn" data-action="asg-add">+ 割り当て</button>`}
     </div>
     ${rows}
     ${resRows.join("")}`;
@@ -1116,6 +1214,11 @@ function saveAsgForm() {
   const date = document.getElementById("a-date").value || selDate;
   const start = document.getElementById("a-start").value || "09:00";
   const est = Math.max(1, Number(document.getElementById("a-est").value) || 25);
+  if (isClosed(date)) { alert("その日は締め済みのため編集できません"); return; }
+  if (editingAsgId) {
+    const orig = state.assignments.find((x) => x.id === editingAsgId);
+    if (orig && isClosed(orig.date)) { alert("締め済みの日の割り当ては編集できません"); return; }
+  }
   if (!taskId && !editingAsgId) {
     taskId = createSingleTask(title, start, est).id; // 直接入力も原本を作る
   }
@@ -1150,6 +1253,7 @@ function saveAsgForm() {
 }
 
 function fixVirtual(taskId, dk) {
+  if (isClosed(dk)) return;
   const t = taskById(taskId);
   if (!t) return;
   const a = {
@@ -1267,6 +1371,8 @@ function renderPlan() {
 
 function renderAll() {
   renderHeader();
+  const fab = document.getElementById("fab");
+  if (fab) fab.style.display = view === "today" && execEditable(viewDate) ? "" : "none";
   if (view === "today") {
     const cur = currentAsg();
     renderedCurrentId = cur ? cur.id : null;
@@ -1573,6 +1679,24 @@ function readablePayload() {
         done: t.type === "single" ? (t.done ? "完了" : "未完了") : "",
       };
     }),
+    daily: (() => {
+      const map = {};
+      state.assignments.forEach((a) => {
+        const m = map[a.date] || (map[a.date] = { date: a.date, plan: 0, actual: 0, total: 0, done: 0 });
+        m.plan += a.estimateMin || 0;
+        m.actual += (a.spentSec || 0) + (a.status === "doing" && a.startedAt ? (Date.now() - a.startedAt) / 1000 : 0);
+        m.total++;
+        if (a.status === "done") m.done++;
+      });
+      return Object.values(map).map((m) => ({
+        date: m.date,
+        plan: m.plan,
+        actual: Math.round(m.actual / 6) / 10,
+        total: m.total,
+        done: m.done,
+        closed: isClosed(m.date) ? "締" : "",
+      }));
+    })(),
     assignments: state.assignments.map((a) => ({
       id: a.id,
       date: a.date,
@@ -1769,8 +1893,29 @@ document.addEventListener("click", (e) => {
   /* タブ */
   else if (action === "tab") switchView(btn.dataset.tab);
   else if (action === "mini-jump") {
+    viewDate = todayKey();
     switchView("today");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  else if (action === "d-prev") { viewDate = addDays(viewDate, -1); renderAll(); }
+  else if (action === "d-next") { viewDate = addDays(viewDate, 1); renderAll(); }
+  else if (action === "d-today") { viewDate = todayKey(); renderAll(); }
+  else if (action === "day-close") {
+    if (viewDate > todayKey()) return;
+    if (dayList(viewDate).some((a) => a.status === "doing")) {
+      alert("作業中のタイマーがあります。完了か中断をしてから締めてください。");
+      return;
+    }
+    if (confirm("この日を締めますか?締め後はこの日の編集ができなくなります。")) {
+      state.closedDates.push(viewDate);
+      save();
+      renderAll();
+    }
+  }
+  else if (action === "day-open") {
+    state.closedDates = state.closedDates.filter((dk) => dk !== viewDate);
+    save();
+    renderAll();
   }
 
   /* ガント */
@@ -1823,7 +1968,7 @@ document.addEventListener("click", (e) => {
   } else if (action === "task-add-issue") {
     openTaskForm(null, null, id);
   } else if (action === "g-showname") {
-    showNameTip(btn.dataset.name, e.clientX, e.clientY);
+    showNameTip(btn.dataset.name, btn);
   } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
   else if (action === "issue-cancel") {
@@ -1874,7 +2019,7 @@ document.addEventListener("click", (e) => {
     if (collapsedIds.has(id)) collapsedIds.delete(id);
     else collapsedIds.add(id);
     saveCollapsed();
-    renderPlan();
+    renderAll();
   } else if (action === "task-reopen") {
     const t = taskById(id);
     if (t) { t.done = false; save(); renderPlan(); }

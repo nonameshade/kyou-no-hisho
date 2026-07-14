@@ -62,9 +62,15 @@
 
     <!-- ============ 今日 ============ -->
     <div id="view-today">
+      <div class="cal-nav">
+        <button class="sbtn muted" data-action="d-prev">◀ 前日</button>
+        <button class="sbtn" data-action="d-today">今日へ</button>
+        <button class="sbtn muted" data-action="d-next">翌日 ▶</button>
+      </div>
       <section id="hero"></section>
-      <h2 class="section-label">今日のタイムライン</h2>
+      <h2 class="section-label" id="timeline-label">今日のタイムライン</h2>
       <div id="timeline"></div>
+      <div id="day-close"></div>
 
       <section id="add-form" class="add-form hidden">
         <div class="form-title">今日のタスクを追加</div>

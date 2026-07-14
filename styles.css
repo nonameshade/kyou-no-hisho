@@ -880,3 +880,32 @@ input[type="date"], input[type="time"] {
   from { transform: scaleX(0); opacity: 0; }
   to { transform: scaleX(1); opacity: 1; }
 }
+
+/* ---------- フェーズ9:日付ナビ・締め・パンくず・追随ドラッグ ---------- */
+#name-tip { position: absolute; }
+
+.hero-crumb { font-size: 11.5px; opacity: .7; margin: 2px 0 1px; }
+.crumb { color: var(--muted); font-weight: 500; }
+.t-title .crumb { font-size: 12px; }
+
+.g-hcell2.locked { background: #E3E6EA; color: #9AA4AE; }
+.g-lock-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(45deg, rgba(154,164,174,.16), rgba(154,164,174,.16) 4px, transparent 4px, transparent 8px);
+  z-index: 1;
+  pointer-events: none;
+}
+.g-cell.locked-cell { cursor: default; opacity: .7; }
+
+/* 掴んだ瞬間とドラッグ追随 */
+.grabbed {
+  transform: scale(1.02);
+  box-shadow: 0 6px 18px rgba(23,33,43,.2);
+  position: relative;
+  z-index: 5;
+}
+.sorting { transition: none; } /* 追随はtransformで直接動かすためアニメを切る */
+
+.g-scell .caret { width: 18px; font-size: 11px; }
