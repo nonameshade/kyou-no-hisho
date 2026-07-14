@@ -86,8 +86,8 @@
         <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
         <button class="sbtn" data-action="g-today">今日へ</button>
         <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
-        <button class="sbtn muted" data-action="g-toggledone" id="g-donebtn">完了を表示</button>
-        <button class="sbtn muted" data-action="g-help">ⓘ 操作方法</button>
+        <label class="chk"><input type="checkbox" id="g-showdone">完了を表示</label>
+        <button class="ibtn" data-action="g-help" aria-label="操作方法">i</button>
       </div>
       <div id="gantt"></div>
 
@@ -176,7 +176,7 @@
 
       <section class="plan-block">
         <div class="plan-head">
-          <h2 class="section-label">タスク(階層)</h2>
+          <h2 class="section-label">未分類のタスク</h2>
           <button class="sbtn" data-action="task-add">+ タスクを追加</button>
         </div>
         <div id="task-tree"></div>
@@ -199,6 +199,7 @@
               <option value="single">1回限り</option>
               <option value="irregular">不定期(繰り返し)</option>
               <option value="recurring">周期的</option>
+              <option value="summary">サマリー(子タスクの見出し)</option>
             </select>
           </label>
           <label>見積(分)

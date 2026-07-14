@@ -194,6 +194,7 @@ function occursOn(task, dateKey) {
 }
 
 function recurrenceLabel(task) {
+  if (task.type === "summary") return "サマリー";
   if (task.type === "irregular") return "不定期";
   const r = task.recurrence;
   if (!r) return "1回限り";
@@ -598,6 +599,19 @@ function renderTimeline() {
 
 /* ---------- 描画:統合ガント(計画モード) ---------- */
 let showDone = localStorage.getItem("hisho:ui:showdone") === "1";
+let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
+function saveOpenIssues() {
+  localStorage.setItem("hisho:ui:openissues", JSON.stringify([...openIssueIds]));
+}
+function orderedRoots(issueId) {
+  if (issueId !== undefined) {
+    return state.tasks.filter((t) => !t.parentId && (t.issueId || null) === issueId);
+  }
+  const out = [];
+  state.issues.forEach((g) => out.push(...state.tasks.filter((t) => !t.parentId && t.issueId === g.id)));
+  out.push(...state.tasks.filter((t) => !t.parentId && !t.issueId));
+  return out;
+}
 let collapsedIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:collapsed") || "[]"));
 function saveCollapsed() {
   localStorage.setItem("hisho:ui:collapsed", JSON.stringify([...collapsedIds]));
@@ -605,8 +619,8 @@ function saveCollapsed() {
 
 function renderGantt() {
   const box = document.getElementById("gantt");
-  const doneBtn = document.getElementById("g-donebtn");
-  if (doneBtn) doneBtn.textContent = showDone ? "完了を隠す" : "完了を表示";
+  const doneChk = document.getElementById("g-showdone");
+  if (doneChk) doneChk.checked = showDone;
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
@@ -637,10 +651,12 @@ function renderGantt() {
     .map((dk, i) => {
       const d = new Date(dk + "T00:00:00");
       const wd = d.getDay();
-      const mon = d.getDate() === 1 || i === 0 ? `${d.getMonth() + 1}月` : "&nbsp;";
+      const mon = d.getDate() === 1 || i === 0
+        ? `<span class="g-mon2">${d.getMonth() + 1}月</span>`
+        : "";
       return `<button class="g-hcell2 ${wd === 0 || wd === 6 ? "we" : ""} ${dk === tk ? "td" : ""} ${dk === selDate ? "sel" : ""}"
         style="left:${colX(i)}px;width:${G_COLW}px" data-action="g-selday" data-date="${dk}">
-        <span class="g-mon2">${mon}</span>${d.getDate()}</button>`;
+        ${mon}${d.getDate()}</button>`;
     })
     .join("");
 
@@ -664,15 +680,14 @@ function renderGantt() {
   const sideRows = [];
   const trackRows = [];
   const walk = (parentId, depth) => {
-    state.tasks
-      .filter((t) => (t.parentId || null) === parentId)
+    (parentId === null ? orderedRoots() : state.tasks.filter((t) => t.parentId === parentId))
       .forEach((t) => {
         const hideThis = !showDone && t.type === "single" && t.done;
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
           const prog = depth === 0 ? progressOf(t) : null;
-          const p = t.type === "single" || t.type === "irregular" ? effPeriod(t) : { s: null, e: null };
+          const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
 
           let bar = "";
           if (p.s && p.e && p.e >= days[0] && p.s <= days[days.length - 1]) {
@@ -712,6 +727,9 @@ function renderGantt() {
               } else if (autoRes) {
                 mark = `<span class="mark ares-m">○</span>`;
               }
+              if (t.type === "summary") {
+                return `<div class="g-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`;
+              }
               return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
                 data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
             })
@@ -719,7 +737,8 @@ function renderGantt() {
 
           const rec = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
           sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px">
+            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${10 + depth * 14}px"
+                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">
               <span class="g-name">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
             </div>`);
@@ -757,7 +776,7 @@ function renderGantt() {
 /* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
   const t = taskById(taskId);
-  if (!t) return;
+  if (!t || t.type === "summary") return;
   const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
 
   if (t.type === "recurring") {
@@ -799,6 +818,102 @@ function toggleCell(taskId, dk) {
   save();
   renderGantt();
 }
+
+/* ---------- タスク名の全体表示チップ ---------- */
+function showNameTip(text, x, y) {
+  let tip = document.getElementById("name-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "name-tip";
+    document.body.appendChild(tip);
+  }
+  tip.textContent = text;
+  tip.style.display = "block";
+  tip.style.left = "0px";
+  tip.style.top = "0px";
+  const w = tip.offsetWidth;
+  tip.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`;
+  tip.style.top = `${y + 16}px`;
+  clearTimeout(showNameTip._t);
+  showNameTip._t = setTimeout(() => { tip.style.display = "none"; }, 2500);
+}
+
+/* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
+let sortDrag = null;
+
+document.addEventListener("pointerdown", (e) => {
+  const h = e.target.closest(".drag-h");
+  if (!h) return;
+  const issueEl = h.closest("[data-issue]");
+  const taskEl = h.closest("[data-task]");
+  if (!issueEl && !taskEl) return;
+  sortDrag = {
+    type: issueEl ? "issue" : "task",
+    id: issueEl ? issueEl.dataset.issue : taskEl.dataset.task,
+    el: issueEl || taskEl,
+    py: e.clientY,
+    moved: false,
+    hint: null,
+  };
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (!sortDrag) return;
+  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 8) {
+    sortDrag.moved = true;
+    sortDrag.el.classList.add("sorting");
+  }
+  if (!sortDrag.moved) return;
+  const sel = sortDrag.type === "issue" ? "[data-issue]" : "[data-task]";
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const target = under ? under.closest(sel) : null;
+  if (sortDrag.hint && sortDrag.hint !== target) sortDrag.hint.classList.remove("drop-hint");
+  if (target && target !== sortDrag.el) {
+    target.classList.add("drop-hint");
+    sortDrag.hint = target;
+  }
+});
+
+document.addEventListener("pointerup", (e) => {
+  if (!sortDrag) return;
+  const d = sortDrag;
+  sortDrag = null;
+  d.el.classList.remove("sorting");
+  if (d.hint) d.hint.classList.remove("drop-hint");
+  if (!d.moved || !d.hint) return;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 80);
+
+  const rect = d.hint.getBoundingClientRect();
+  const after = e.clientY > rect.top + rect.height / 2;
+
+  if (d.type === "issue") {
+    const targetId = d.hint.dataset.issue;
+    if (targetId === d.id) return;
+    const dragged = issueById(d.id);
+    state.issues = state.issues.filter((g) => g.id !== d.id);
+    let idx = state.issues.findIndex((g) => g.id === targetId);
+    if (after) idx++;
+    state.issues.splice(idx, 0, dragged);
+    save();
+    renderPlan();
+  } else {
+    const targetId = d.hint.dataset.task;
+    if (targetId === d.id) return;
+    const dragged = taskById(d.id);
+    const target = taskById(targetId);
+    if (!dragged || !target) return;
+    const sameParent = (dragged.parentId || null) === (target.parentId || null);
+    const sameIssue = (dragged.issueId || null) === (target.issueId || null);
+    if (!sameParent || (!dragged.parentId && !sameIssue)) return; // 同じ階層・同じ課題内のみ
+    state.tasks = state.tasks.filter((t) => t.id !== d.id);
+    let idx = state.tasks.findIndex((t) => t.id === targetId);
+    if (after) idx++;
+    state.tasks.splice(idx, 0, dragged);
+    save();
+    renderPlan();
+  }
+});
 
 /* ---------- マークのドラッグ移動 ---------- */
 let drag = null;
@@ -932,7 +1047,7 @@ function fillAsgTaskSelect() {
     state.tasks
       .filter((t) => (t.parentId || null) === parentId)
       .forEach((t) => {
-        if (!(t.type === "single" && t.done)) {
+        if (t.type !== "summary" && !(t.type === "single" && t.done)) {
           options.push(`<option value="${t.id}">${"　".repeat(depth)}${esc(t.title)}</option>`);
         }
         walk(t.id, depth + 1);
@@ -1023,15 +1138,52 @@ function fixVirtual(taskId, dk) {
   openAsgForm(dk, a);
 }
 
-/* ---------- 描画:課題タブ ---------- */
+/* ---------- 描画:課題タブ(課題ごとにタスクを展開) ---------- */
+function renderTaskTree(roots) {
+  const renderNode = (t, depth) => {
+    const prog = !t.parentId ? progressOf(t) : null;
+    const issue = t.issueId ? issueById(t.issueId) : null;
+    const children = state.tasks.filter((c) => c.parentId === t.id);
+    const marks = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : t.type === "summary" ? "▤ " : "";
+    const isCollapsed = collapsedIds.has(t.id);
+    const caret = children.length
+      ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsed ? "▸" : "▾"}</button>`
+      : `<span class="caret ghost"></span>`;
+    const reopenBtn = t.type === "single" && t.done
+      ? `<button class="sbtn" data-action="task-reopen" data-id="${t.id}">戻す</button>`
+      : "";
+    const sub = t.type === "summary"
+      ? `${prog !== null ? `進捗 ${prog}% ・ ` : ""}サマリー${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}`
+      : `${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}`;
+    const row = `
+      <div class="p-row" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
+        <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
+        ${caret}
+        <div class="p-main">
+          <div class="p-title ${t.done ? "done-task" : ""}">${marks}${esc(t.title)}</div>
+          <div class="p-sub">${sub}</div>
+        </div>
+        <div class="p-actions">
+          ${reopenBtn}
+          <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
+          <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
+        </div>
+      </div>`;
+    return row + (isCollapsed ? "" : children.map((c) => renderNode(c, depth + 1)).join(""));
+  };
+  return roots.map((t) => renderNode(t, 0)).join("");
+}
+
 function renderPlan() {
   const list = document.getElementById("issue-list");
   const tk = todayKey();
   list.innerHTML = state.issues.length
     ? state.issues
         .map((g) => {
+          const roots = orderedRoots(g.id);
           const cnt = state.tasks.filter((t) => t.issueId === g.id).length;
           const c = issueColor(g.id);
+          const open = openIssueIds.has(g.id);
           let dl = "";
           if (g.deadline) {
             const rest = diffDays(g.deadline, tk);
@@ -1045,62 +1197,41 @@ function renderPlan() {
                 `<div class="issue-target"><span class="rank-chip" style="background:${c}">${esc(t.rank)}</span><span>${esc(t.text)}</span></div>`
             )
             .join("");
+          const body = open
+            ? `
+            ${g.purpose ? `<div class="issue-purpose">目的: ${esc(g.purpose)}</div>` : ""}
+            ${targets ? `<div class="issue-targets">${targets}</div>` : ""}
+            <div class="issue-tasks">
+              ${roots.length ? renderTaskTree(roots) : `<div class="plan-empty">この課題のタスクはまだありません。</div>`}
+            </div>
+            <div class="issue-foot">
+              <button class="sbtn" data-action="task-add-issue" data-id="${g.id}">+ タスク</button>
+              <button class="sbtn muted" data-action="issue-edit" data-id="${g.id}">課題を編集</button>
+            </div>`
+            : "";
           return `
-          <div class="issue-card" style="border-left-color:${c}">
-            <div class="issue-top">
-              <div>
+          <div class="issue-card" data-issue="${g.id}" style="border-left-color:${c}">
+            <div class="issue-top" data-action="issue-open" data-id="${g.id}">
+              <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
+              <span class="caret">${open ? "▾" : "▸"}</span>
+              <div style="flex:1;min-width:0;">
                 <div class="issue-title">${esc(g.title)}</div>
-                ${g.purpose ? `<div class="issue-purpose">目的: ${esc(g.purpose)}</div>` : ""}
+                ${!open ? `<div class="issue-purpose">タスク ${cnt}件</div>` : ""}
               </div>
               ${dl}
             </div>
-            ${targets ? `<div class="issue-targets">${targets}</div>` : ""}
-            <div class="issue-foot">
-              <div class="p-sub">関連タスク ${cnt}件</div>
-              <button class="sbtn muted" data-action="issue-edit" data-id="${g.id}">編集</button>
-            </div>
+            ${body}
           </div>`;
         })
         .join("")
     : `<div class="plan-empty">課題を登録すると、目的・目標(S/A/B…)・期日とあわせて管理できます。</div>`;
 
-  /* タスクツリー */
+  /* 未分類タスク */
   const tree = document.getElementById("task-tree");
-  if (!state.tasks.length) {
-    tree.innerHTML = `<div class="plan-empty">タスクの原本をここで管理します。日付への割り当てはガントのマスをタップして行います。</div>`;
-    return;
-  }
-  const renderNode = (t, depth) => {
-    const prog = depth === 0 ? progressOf(t) : null;
-    const issue = t.issueId ? issueById(t.issueId) : null;
-    const chip = issue
-      ? `<span class="goal-chip" style="background:${issueColor(issue.id)}22;color:${issueColor(issue.id)}">${esc(issue.title)}</span>`
-      : "";
-    const children = state.tasks.filter((c) => c.parentId === t.id);
-    const marks = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
-    const isCollapsed = collapsedIds.has(t.id);
-    const caret = children.length
-      ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsed ? "▸" : "▾"}</button>`
-      : `<span class="caret ghost"></span>`;
-    const reopenBtn = t.type === "single" && t.done
-      ? `<button class="sbtn" data-action="task-reopen" data-id="${t.id}">戻す</button>`
-      : "";
-    const row = `
-      <div class="p-row" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
-        ${caret}
-        <div class="p-main">
-          <div class="p-title ${t.done ? "done-task" : ""}">${chip}${marks}${esc(t.title)}</div>
-          <div class="p-sub">${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}</div>
-        </div>
-        <div class="p-actions">
-          ${reopenBtn}
-          <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
-          <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
-        </div>
-      </div>`;
-    return row + (isCollapsed ? "" : children.map((c) => renderNode(c, depth + 1)).join(""));
-  };
-  tree.innerHTML = state.tasks.filter((t) => !t.parentId).map((t) => renderNode(t, 0)).join("");
+  const orphanRoots = orderedRoots(null);
+  tree.innerHTML = orphanRoots.length
+    ? renderTaskTree(orphanRoots)
+    : `<div class="plan-empty">課題に紐づかないタスクはここに表示されます。</div>`;
 }
 
 function renderAll() {
@@ -1202,8 +1333,11 @@ function fillParentGoalSelects(excludeId) {
 
 function updateRecVisibility() {
   const type = document.getElementById("t-type").value;
+  const isSummary = type === "summary";
   document.getElementById("rec-block").classList.toggle("hidden", type !== "recurring");
-  document.getElementById("period-block").classList.toggle("hidden", type === "recurring");
+  document.getElementById("period-block").classList.toggle("hidden", type === "recurring" || isSummary);
+  document.getElementById("t-est").parentElement.classList.toggle("hidden", isSummary);
+  document.getElementById("t-defstart").parentElement.classList.toggle("hidden", isSummary);
   const kind = document.getElementById("t-rkind").value;
   document.getElementById("rec-ndays").classList.toggle("hidden", kind !== "everyNDays");
   document.getElementById("rec-weekly").classList.toggle("hidden", kind !== "weekly");
@@ -1214,13 +1348,18 @@ function updateRecVisibility() {
   document.getElementById("rs-wd").classList.toggle("hidden", rs !== "weekday");
 }
 
-function openTaskForm(task, parentId) {
+function openTaskForm(task, parentId, presetIssueId) {
   editingTaskId = task ? task.id : null;
   fillParentGoalSelects(editingTaskId);
   document.getElementById("task-form-title").textContent = task ? "タスクを編集" : "タスクを追加";
   document.getElementById("t-title").value = task ? task.title : "";
   document.getElementById("t-parent").value = task ? task.parentId || "" : parentId || "";
-  document.getElementById("t-goal").value = task ? task.issueId || "" : "";
+  const parent = parentId ? taskById(parentId) : null;
+  document.getElementById("t-goal").value = task
+    ? task.issueId || ""
+    : parent
+      ? parent.issueId || ""
+      : presetIssueId || "";
   document.getElementById("t-type").value = task ? task.type : "single";
   document.getElementById("t-est").value = task ? task.estimateMin : 25;
   document.getElementById("t-defstart").value = task ? task.defStart || "09:00" : "09:00";
@@ -1303,10 +1442,10 @@ function saveTaskForm() {
     parentId: document.getElementById("t-parent").value || null,
     issueId: document.getElementById("t-goal").value || null,
     type,
-    estimateMin: Math.max(1, Number(document.getElementById("t-est").value) || 25),
+    estimateMin: type === "summary" ? 0 : Math.max(1, Number(document.getElementById("t-est").value) || 25),
     defStart: document.getElementById("t-defstart").value || "09:00",
-    planStart: type === "recurring" ? null : ps,
-    planEnd: type === "recurring" ? null : pe,
+    planStart: type === "recurring" || type === "summary" ? null : ps,
+    planEnd: type === "recurring" || type === "summary" ? null : pe,
     recurrence: type === "recurring" ? readRecurrence() : null,
     reserveRule: type === "recurring" ? readReserveRule() : null,
   };
@@ -1568,10 +1707,6 @@ document.addEventListener("click", (e) => {
     renderGantt();
   } else if (action === "g-cell") {
     if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
-  } else if (action === "g-toggledone") {
-    showDone = !showDone;
-    localStorage.setItem("hisho:ui:showdone", showDone ? "1" : "0");
-    renderGantt();
   } else if (action === "asg-add") {
     openAsgForm(selDate, null);
   } else if (action === "asg-edit") {
@@ -1602,7 +1737,17 @@ document.addEventListener("click", (e) => {
   }
 
   /* 課題 */
-  else if (action === "issue-add") openIssueForm(null);
+  else if (action === "issue-open") {
+    if (suppressClick) return;
+    if (openIssueIds.has(id)) openIssueIds.delete(id);
+    else openIssueIds.add(id);
+    saveOpenIssues();
+    renderPlan();
+  } else if (action === "task-add-issue") {
+    openTaskForm(null, null, id);
+  } else if (action === "g-showname") {
+    showNameTip(btn.dataset.name, e.clientX, e.clientY);
+  } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
   else if (action === "issue-cancel") {
     editingIssueId = null;
@@ -1676,6 +1821,11 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
+  if (e.target.id === "g-showdone") {
+    showDone = e.target.checked;
+    localStorage.setItem("hisho:ui:showdone", showDone ? "1" : "0");
+    renderGantt();
+  }
   if (e.target.id === "a-task") {
     updateAsgTitleVisibility();
     const t = e.target.value ? taskById(e.target.value) : null;
