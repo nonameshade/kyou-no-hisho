@@ -939,3 +939,103 @@ input[type="date"], input[type="time"] {
   0% { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
   100% { background: var(--surface); box-shadow: none; }
 }
+
+/* ---------- フェーズ12:検索・アーカイブ・スワイプ ---------- */
+.search-row { margin-bottom: 14px; }
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px 12px;
+}
+.search-ico { font-size: 13px; opacity: .6; }
+.search-box input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 9px 0;
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--ink);
+  outline: none;
+  min-width: 0;
+}
+.search-clear {
+  border: none;
+  background: var(--line);
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.filter-chips { display: flex; gap: 6px; margin-top: 8px; }
+.fchip {
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+.fchip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* スワイプアーカイブ */
+.swipe-wrap { position: relative; overflow: hidden; border-radius: 12px; margin-bottom: 8px; }
+.swipe-wrap .p-row { margin-bottom: 0; }
+.swipe-action {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 88px;
+  background: #B0692B;
+  display: flex;
+  align-items: stretch;
+  border-radius: 0 12px 12px 0;
+}
+.swipe-action button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.swipe-target { position: relative; z-index: 1; touch-action: pan-y; will-change: transform; }
+
+/* スナックバー */
+#snackbar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 150;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 12px;
+  padding: 10px 12px 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(23,33,43,.4);
+  animation: snackin .2s ease;
+  max-width: 92vw;
+}
+#snackbar.hidden { display: none; }
+#snackbar .sbtn { background: rgba(255,255,255,.14); border-color: transparent; color: #7FD8C4; font-weight: 700; }
+@keyframes snackin {
+  from { transform: translateX(-50%) translateY(12px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}

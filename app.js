@@ -233,7 +233,7 @@ function materializeToday() {
   if (isClosed(dk)) return;
   let changed = false;
   state.tasks
-    .filter((t) => t.type === "recurring" && occursOn(t, dk) && !hasSkip(t.id, dk))
+    .filter((t) => !t.archived && t.type === "recurring" && occursOn(t, dk) && !hasSkip(t.id, dk))
     .forEach((t) => {
       const exists = state.assignments.some((a) => a.taskId === t.id && a.date === dk);
       if (!exists) {
@@ -275,7 +275,7 @@ function reserveFor(task, dk) {
 /* 周期タスク:期間内に落ちるルール予備日の集合 */
 function ruleReserveDates(task, from, to) {
   const out = new Set();
-  if (task.type !== "recurring" || !task.reserveRule) return out;
+  if (task.archived || task.type !== "recurring" || !task.reserveRule) return out;
   let d = addDays(from, -35);
   const end = addDays(to, 35);
   while (d <= end) {
@@ -296,6 +296,7 @@ function dayItems(dk) {
       ? state.tasks
           .filter(
             (t) =>
+              !t.archived &&
               t.type === "recurring" &&
               occursOn(t, dk) &&
               !hasSkip(t.id, dk) &&
@@ -392,7 +393,7 @@ function finishAsg(id) {
   const a = state.assignments.find((x) => x.id === id);
   if (a && a.taskId) {
     const t = taskById(a.taskId);
-    if (t && t.type === "single") t.done = true;
+    if (t && t.type === "single") { t.done = true; t.archived = true; } // 完了と同時に自動アーカイブ
   }
   releaseWake();
   save();
@@ -408,7 +409,7 @@ function reopenAsg(id) {
   a.status = "todo";
   if (a.taskId) {
     const t = taskById(a.taskId);
-    if (t && t.type === "single") t.done = false;
+    if (t && t.type === "single") { t.done = false; t.archived = false; } // 完了解除でアーカイブも解除
   }
   save();
   renderAll();
@@ -763,7 +764,7 @@ function renderGantt() {
   const walk = (parentId, depth) => {
     (parentId === null ? orderedRoots() : state.tasks.filter((t) => t.parentId === parentId))
       .forEach((t) => {
-        const hideThis = !showDone && t.type === "single" && t.done;
+        const hideThis = t.archived || (!showDone && t.type === "single" && t.done);
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
@@ -1056,6 +1057,57 @@ document.addEventListener("pointerup", () => {
   }
 });
 
+/* ---------- スワイプでアーカイブ(課題タブのタスク行) ---------- */
+let swipe = null;
+let openSwipeRow = null;
+
+function closeOpenSwipe() {
+  if (openSwipeRow) {
+    openSwipeRow.style.transition = "transform .18s ease";
+    openSwipeRow.style.transform = "";
+    openSwipeRow = null;
+  }
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (view !== "plan") return;
+  if (e.target.closest("button") || e.target.closest(".drag-h") || e.target.closest(".caret")) return;
+  const row = e.target.closest(".swipeable .swipe-target");
+  if (openSwipeRow && openSwipeRow !== row) closeOpenSwipe();
+  if (!row) return;
+  swipe = { row, sx: e.clientX, sy: e.clientY, horiz: null, dx: 0 };
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.sx;
+  const dy = e.clientY - swipe.sy;
+  if (swipe.horiz === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+    swipe.horiz = Math.abs(dx) > Math.abs(dy);
+    if (!swipe.horiz) { swipe = null; return; }
+    swipe.row.style.transition = "none";
+  }
+  if (!swipe.horiz) return;
+  swipe.dx = Math.max(-100, Math.min(0, dx));
+  swipe.row.style.transform = `translateX(${swipe.dx}px)`; // 指に追随
+});
+
+document.addEventListener("pointerup", () => {
+  if (!swipe) return;
+  const s = swipe;
+  swipe = null;
+  if (s.horiz === null) return;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 80);
+  s.row.style.transition = "transform .18s ease";
+  if (s.dx < -55) {
+    s.row.style.transform = "translateX(-88px)"; // アーカイブボタンを見せて止まる
+    openSwipeRow = s.row;
+  } else {
+    s.row.style.transform = "";
+  }
+});
+
 /* ---------- マークのドラッグ移動 ---------- *//* ---------- マークのドラッグ移動 ---------- */
 let drag = null;
 let suppressClick = false;
@@ -1192,7 +1244,7 @@ function fillAsgTaskSelect() {
     state.tasks
       .filter((t) => (t.parentId || null) === parentId)
       .forEach((t) => {
-        if (t.type !== "summary" && !(t.type === "single" && t.done)) {
+        if (!t.archived && t.type !== "summary" && !(t.type === "single" && t.done)) {
           options.push(`<option value="${t.id}">${"　".repeat(depth)}${esc(t.title)}</option>`);
         }
         walk(t.id, depth + 1);
@@ -1290,34 +1342,70 @@ function fixVirtual(taskId, dk) {
 }
 
 /* ---------- 描画:課題タブ(課題ごとにタスクを展開) ---------- */
-function renderTaskTree(roots) {
+let searchQuery = "";
+let archFilter = localStorage.getItem("hisho:ui:archfilter") || "active";
+
+function computeVisibleTasks() {
+  const q = searchQuery.trim().toLowerCase();
+  const base = new Set();
+  state.tasks.forEach((t) => {
+    const archOk =
+      archFilter === "all" ? true : archFilter === "archived" ? !!t.archived : !t.archived;
+    const qOk = !q || t.title.toLowerCase().includes(q);
+    if (archOk && qOk) base.add(t.id);
+  });
+  /* マッチしたタスクの祖先は文脈として表示する */
+  const visible = new Set(base);
+  base.forEach((id) => {
+    let p = taskById(id);
+    p = p && p.parentId ? taskById(p.parentId) : null;
+    while (p) {
+      visible.add(p.id);
+      p = p.parentId ? taskById(p.parentId) : null;
+    }
+  });
+  return visible;
+}
+
+function renderTaskTree(roots, visible) {
+  const searching = !!searchQuery.trim();
   const renderNode = (t, depth) => {
+    if (visible && !visible.has(t.id)) return "";
     const prog = !t.parentId ? progressOf(t) : null;
     const issue = t.issueId ? issueById(t.issueId) : null;
     const children = state.tasks.filter((c) => c.parentId === t.id);
     const marks = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : t.type === "summary" ? "▤ " : "";
-    const isCollapsed = collapsedIds.has(t.id);
+    const isCollapsed = !searching && collapsedIds.has(t.id);
     const caret = children.length
       ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsed ? "▸" : "▾"}</button>`
       : `<span class="caret ghost"></span>`;
-    const reopenBtn = t.type === "single" && t.done
+    const reopenBtn = t.type === "single" && t.done && !t.archived
       ? `<button class="sbtn" data-action="task-reopen" data-id="${t.id}">戻す</button>`
       : "";
+    const archBtn = t.archived
+      ? `<button class="sbtn" data-action="task-unarchive" data-id="${t.id}">解除</button>`
+      : "";
+    const archTag = t.archived ? `<span class="virtual-tag">📦 アーカイブ済</span> ` : "";
+    const notesMark = t.notes ? " ・ 📝" : "";
     const sub = t.type === "summary"
-      ? `${prog !== null ? `進捗 ${prog}% ・ ` : ""}サマリー${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}`
-      : `${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}`;
+      ? `${prog !== null ? `進捗 ${prog}% ・ ` : ""}サマリー${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}${notesMark}`
+      : `${prog !== null ? `進捗 ${prog}% ・ ` : ""}${recurrenceLabel(t)} ・ 見積 ${t.estimateMin}分${children.length ? ` ・ 子タスク ${children.length}件${isCollapsed ? "(折りたたみ中)" : ""}` : ""}${notesMark}`;
     const row = `
-      <div class="p-row" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
-        <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
-        ${caret}
-        <div class="p-main">
-          <div class="p-title ${t.done ? "done-task" : ""}">${marks}${esc(t.title)}</div>
-          <div class="p-sub">${sub}</div>
-        </div>
-        <div class="p-actions">
-          ${reopenBtn}
-          <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
-          <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
+      <div class="swipe-wrap${t.archived ? "" : " swipeable"}">
+        ${t.archived ? "" : `<div class="swipe-action"><button data-action="task-archive" data-id="${t.id}">📦<br>アーカイブ</button></div>`}
+        <div class="p-row swipe-target" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
+          <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
+          ${caret}
+          <div class="p-main">
+            <div class="p-title ${t.done ? "done-task" : ""}">${archTag}${marks}${esc(t.title)}</div>
+            <div class="p-sub">${sub}</div>
+          </div>
+          <div class="p-actions">
+            ${archBtn}
+            ${reopenBtn}
+            <button class="sbtn muted" data-action="task-child" data-id="${t.id}">+子</button>
+            <button class="sbtn muted" data-action="task-edit" data-id="${t.id}">編集</button>
+          </div>
         </div>
       </div>`;
     return row + (isCollapsed ? "" : children.map((c) => renderNode(c, depth + 1)).join(""));
@@ -1326,15 +1414,28 @@ function renderTaskTree(roots) {
 }
 
 function renderPlan() {
+  /* 検索・絞り込みUIの状態反映 */
+  const sInput = document.getElementById("task-search");
+  if (sInput && sInput.value !== searchQuery) sInput.value = searchQuery;
+  const clearBtn = document.getElementById("search-clear");
+  if (clearBtn) clearBtn.classList.toggle("hidden", !searchQuery);
+  document.querySelectorAll(".fchip").forEach((el) =>
+    el.classList.toggle("on", el.dataset.v === archFilter)
+  );
+
+  const visible = computeVisibleTasks();
+  const searching = !!searchQuery.trim();
   const list = document.getElementById("issue-list");
   const tk = todayKey();
+
   list.innerHTML = state.issues.length
     ? state.issues
         .map((g) => {
-          const roots = orderedRoots(g.id);
-          const cnt = state.tasks.filter((t) => t.issueId === g.id).length;
+          const roots = orderedRoots(g.id).filter((t) => visible.has(t.id));
+          if (searching && !roots.length) return "";
+          const cnt = state.tasks.filter((t) => t.issueId === g.id && visible.has(t.id)).length;
           const c = issueColor(g.id);
-          const open = openIssueIds.has(g.id);
+          const open = searching || openIssueIds.has(g.id);
           let dl = "";
           if (g.deadline) {
             const rest = diffDays(g.deadline, tk);
@@ -1353,7 +1454,7 @@ function renderPlan() {
             ${g.purpose ? `<div class="issue-purpose">目的: ${esc(g.purpose)}</div>` : ""}
             ${targets ? `<div class="issue-targets">${targets}</div>` : ""}
             <div class="issue-tasks">
-              ${roots.length ? renderTaskTree(roots) : `<div class="plan-empty">この課題のタスクはまだありません。</div>`}
+              ${roots.length ? renderTaskTree(roots, visible) : `<div class="plan-empty">${searching ? "一致するタスクはありません。" : "この課題のタスクはまだありません。"}</div>`}
             </div>
             <div class="issue-foot">
               <button class="sbtn" data-action="task-add-issue" data-id="${g.id}">+ タスク</button>
@@ -1379,10 +1480,40 @@ function renderPlan() {
 
   /* 未分類タスク */
   const tree = document.getElementById("task-tree");
-  const orphanRoots = orderedRoots(null);
+  const orphanRoots = orderedRoots(null).filter((t) => visible.has(t.id));
   tree.innerHTML = orphanRoots.length
-    ? renderTaskTree(orphanRoots)
-    : `<div class="plan-empty">課題に紐づかないタスクはここに表示されます。</div>`;
+    ? renderTaskTree(orphanRoots, visible)
+    : `<div class="plan-empty">${searching ? "一致するタスクはありません。" : "課題に紐づかないタスクはここに表示されます。"}</div>`;
+}
+
+/* ---------- アーカイブ ---------- */
+function archiveTask(id) {
+  const t = taskById(id);
+  if (!t) return;
+  t.archived = true;
+  save();
+  renderPlan();
+  showSnack("アーカイブしました", "キャンセル", () => {
+    const x = taskById(id);
+    if (x) { x.archived = false; save(); renderPlan(); }
+  });
+}
+
+function showSnack(msg, actionLabel, cb) {
+  const bar = document.getElementById("snackbar");
+  const msgEl = document.getElementById("snack-msg");
+  const act = document.getElementById("snack-act");
+  if (!bar) return;
+  msgEl.textContent = msg;
+  act.textContent = actionLabel || "";
+  act.style.display = actionLabel ? "" : "none";
+  act.onclick = () => {
+    bar.classList.add("hidden");
+    if (cb) cb();
+  };
+  bar.classList.remove("hidden");
+  clearTimeout(showSnack._t);
+  showSnack._t = setTimeout(() => bar.classList.add("hidden"), 5000);
 }
 
 function renderAll() {
@@ -1651,7 +1782,9 @@ function syncFixedOffset() {
 function updateSyncWarn() {
   const el = document.getElementById("sync-warn");
   if (!el) return;
-  const show = syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1";
+  const busy = typeof syncing !== "undefined" && syncing;
+  const show = syncConfigured() && (localStorage.getItem(DIRTY_KEY) === "1" || busy);
+  el.textContent = busy ? "⏳ 同期しています…" : "⚠ 未同期の変更があります — タップで今すぐ同期";
   el.classList.toggle("hidden", !show);
   syncFixedOffset();
 }
@@ -2051,7 +2184,19 @@ document.addEventListener("click", (e) => {
     renderAll();
   } else if (action === "task-reopen") {
     const t = taskById(id);
-    if (t) { t.done = false; save(); renderPlan(); }
+    if (t) { t.done = false; t.archived = false; save(); renderPlan(); }
+  } else if (action === "task-archive") {
+    if (!suppressClick) archiveTask(id);
+  } else if (action === "task-unarchive") {
+    const t = taskById(id);
+    if (t) { t.archived = false; save(); renderPlan(); }
+  } else if (action === "arch-filter") {
+    archFilter = btn.dataset.v;
+    localStorage.setItem("hisho:ui:archfilter", archFilter);
+    renderPlan();
+  } else if (action === "search-clear") {
+    searchQuery = "";
+    renderPlan();
   } else if (action === "settings-save") {
     const url = document.getElementById("s-url").value.trim();
     const token = document.getElementById("s-token").value.trim();
@@ -2068,6 +2213,23 @@ document.addEventListener("click", (e) => {
     setSyncMsg(syncStatusLabel());
   } else if (action === "sync-now") fullSync(true);
   else if (action === "force-update") forceUpdate();
+});
+
+let searchTimer = null;
+document.addEventListener("input", (e) => {
+  if (e.target.id === "task-search") {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchQuery = e.target.value;
+      const focused = document.activeElement;
+      renderPlan();
+      if (focused && focused.id === "task-search") {
+        const el = document.getElementById("task-search");
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 200);
+  }
 });
 
 document.addEventListener("change", (e) => {

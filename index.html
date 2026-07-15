@@ -154,6 +154,19 @@
     <!-- ============ 課題 ============ -->
     <div id="view-plan" class="hidden">
 
+      <div class="search-row">
+        <div class="search-box">
+          <span class="search-ico">🔍</span>
+          <input type="search" id="task-search" placeholder="タスクを検索" autocomplete="off">
+          <button class="search-clear hidden" id="search-clear" data-action="search-clear">×</button>
+        </div>
+        <div class="filter-chips">
+          <button class="fchip" data-action="arch-filter" data-v="active">通常</button>
+          <button class="fchip" data-action="arch-filter" data-v="archived">アーカイブ</button>
+          <button class="fchip" data-action="arch-filter" data-v="all">すべて</button>
+        </div>
+      </div>
+
       <section class="plan-block">
         <div class="plan-head">
           <h2 class="section-label">課題</h2>
@@ -309,6 +322,11 @@
     </div>
 
     <button id="fab" data-action="add-open">+ タスクを追加</button>
+  </div>
+
+  <div id="snackbar" class="hidden">
+    <span id="snack-msg"></span>
+    <button id="snack-act" class="sbtn"></button>
   </div>
 
   <script src="./app.js"></script>
