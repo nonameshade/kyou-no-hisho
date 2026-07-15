@@ -54,7 +54,7 @@ const ISSUE_COLORS = ["#0E7C66", "#3D5A9E", "#B0692B", "#8A4E9E", "#3F7A3F", "#A
 /* ---------- 状態 ---------- */
 let state = { v: 5, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
 let wakeLock = null;
-let lastBeep = 0;
+let overNotifiedId = null;
 let renderedCurrentId = null;
 let renderedOverrun = false;
 let view = "today";
@@ -152,6 +152,9 @@ function save() {
 const taskById = (id) => state.tasks.find((t) => t.id === id) || null;
 const issueById = (id) => state.issues.find((g) => g.id === id) || null;
 const issueColor = () => "#0E7C66"; // 課題ごとの色分けは廃止(並べ替えで色が変わるのを防ぐ)
+const isTaskArchived = (t) =>
+  !!t.archived || !!(t.issueId && (issueById(t.issueId) || {}).archived);
+
 const asgTitle = (a) => {
   const t = a.taskId ? taskById(a.taskId) : null;
   return t ? t.title : a.title;
@@ -233,7 +236,7 @@ function materializeToday() {
   if (isClosed(dk)) return;
   let changed = false;
   state.tasks
-    .filter((t) => !t.archived && t.type === "recurring" && occursOn(t, dk) && !hasSkip(t.id, dk))
+    .filter((t) => !isTaskArchived(t) && t.type === "recurring" && occursOn(t, dk) && !hasSkip(t.id, dk))
     .forEach((t) => {
       const exists = state.assignments.some((a) => a.taskId === t.id && a.date === dk);
       if (!exists) {
@@ -275,7 +278,7 @@ function reserveFor(task, dk) {
 /* 周期タスク:期間内に落ちるルール予備日の集合 */
 function ruleReserveDates(task, from, to) {
   const out = new Set();
-  if (task.archived || task.type !== "recurring" || !task.reserveRule) return out;
+  if (isTaskArchived(task) || task.type !== "recurring" || !task.reserveRule) return out;
   let d = addDays(from, -35);
   const end = addDays(to, 35);
   while (d <= end) {
@@ -296,7 +299,7 @@ function dayItems(dk) {
       ? state.tasks
           .filter(
             (t) =>
-              !t.archived &&
+              !isTaskArchived(t) &&
               t.type === "recurring" &&
               occursOn(t, dk) &&
               !hasSkip(t.id, dk) &&
@@ -363,7 +366,7 @@ async function startAsg(id) {
       wakeLock.addEventListener("release", () => { wakeLock = null; });
     }
   } catch (e) {}
-  lastBeep = 0;
+  overNotifiedId = null; // 開始のたびに超過通知を1回だけ出し直す
   state.assignments = state.assignments.map((a) => {
     if (a.id === id) return { ...a, status: "doing", startedAt: Date.now() };
     if (a.status === "doing") return { ...a, status: "todo", spentSec: elapsedSec(a), startedAt: null };
@@ -675,7 +678,7 @@ function renderDayClose() {
 }
 
 /* ---------- 描画:統合ガント(計画モード) ---------- *//* ---------- 描画:統合ガント(計画モード) ---------- */
-let showDone = localStorage.getItem("hisho:ui:showdone") === "1";
+let showArch = localStorage.getItem("hisho:ui:showarch") === "1";
 let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
 function saveOpenIssues() {
   localStorage.setItem("hisho:ui:openissues", JSON.stringify([...openIssueIds]));
@@ -696,8 +699,8 @@ function saveCollapsed() {
 
 function renderGantt() {
   const box = document.getElementById("gantt");
-  const doneChk = document.getElementById("g-showdone");
-  if (doneChk) doneChk.checked = showDone;
+  const archChk = document.getElementById("g-showarch");
+  if (archChk) archChk.checked = showArch;
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
@@ -764,7 +767,7 @@ function renderGantt() {
   const walk = (parentId, depth) => {
     (parentId === null ? orderedRoots() : state.tasks.filter((t) => t.parentId === parentId))
       .forEach((t) => {
-        const hideThis = t.archived || (!showDone && t.type === "single" && t.done);
+        const hideThis = !showArch && isTaskArchived(t); // アーカイブのみ非表示(完了でも未アーカイブなら表示)
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
@@ -863,8 +866,36 @@ function renderGantt() {
     if (keepLeft !== null) sc.scrollLeft = keepLeft;
     else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
   }
+  updateGanttStickyHeader();
   renderDayDetail();
 }
+
+/* 縦スクロール時、日付ヘッダー行を画面上部に貼り付ける */
+function updateGanttStickyHeader() {
+  if (view !== "gantt") return;
+  const box = document.getElementById("gantt");
+  if (!box) return;
+  const headTrack = box.querySelector(".g-trow.g-sh");
+  const headSide = box.querySelector(".g-side .g-scell.g-sh");
+  if (!headTrack || !headSide) return;
+  const bars = document.getElementById("fixedbars");
+  const topEdge = bars ? bars.offsetHeight : 0;
+  const rect = box.getBoundingClientRect();
+  const headH = headTrack.offsetHeight;
+  let offset = 0;
+  if (rect.top < topEdge && rect.bottom > topEdge + headH + 40) {
+    offset = topEdge - rect.top;
+  }
+  const tf = offset > 0 ? `translateY(${offset}px)` : "";
+  headTrack.style.transform = tf;
+  headSide.style.transform = tf;
+  headTrack.classList.toggle("floating", offset > 0);
+  headSide.classList.toggle("floating", offset > 0);
+}
+
+window.addEventListener("scroll", () => {
+  requestAnimationFrame(updateGanttStickyHeader);
+}, { passive: true });
 
 /* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
@@ -1057,25 +1088,36 @@ document.addEventListener("pointerup", () => {
   }
 });
 
-/* ---------- スワイプでアーカイブ(課題タブのタスク行) ---------- */
+/* ---------- スワイプでアーカイブ(課題タブのタスク行・課題カード) ---------- */
 let swipe = null;
 let openSwipeRow = null;
 
 function closeOpenSwipe() {
   if (openSwipeRow) {
-    openSwipeRow.style.transition = "transform .18s ease";
-    openSwipeRow.style.transform = "";
+    const row = openSwipeRow;
+    const wrap = row.closest(".swipe-wrap");
     openSwipeRow = null;
+    row.style.transition = "transform .18s ease";
+    row.style.transform = "";
+    if (wrap) setTimeout(() => wrap.classList.remove("show-action"), 200);
   }
 }
 
 document.addEventListener("pointerdown", (e) => {
   if (view !== "plan") return;
   if (e.target.closest("button") || e.target.closest(".drag-h") || e.target.closest(".caret")) return;
-  const row = e.target.closest(".swipeable .swipe-target");
+  const row = e.target.closest(".swipeable > .swipe-target");
   if (openSwipeRow && openSwipeRow !== row) closeOpenSwipe();
   if (!row) return;
-  swipe = { row, sx: e.clientX, sy: e.clientY, horiz: null, dx: 0 };
+  swipe = {
+    row,
+    wrap: row.closest(".swipe-wrap"),
+    sx: e.clientX,
+    sy: e.clientY,
+    horiz: null,
+    base: row === openSwipeRow ? -88 : 0, // 開いた状態から右スワイプで戻せるように基点を持つ
+    cur: null,
+  };
 });
 
 document.addEventListener("pointermove", (e) => {
@@ -1086,10 +1128,11 @@ document.addEventListener("pointermove", (e) => {
     swipe.horiz = Math.abs(dx) > Math.abs(dy);
     if (!swipe.horiz) { swipe = null; return; }
     swipe.row.style.transition = "none";
+    if (swipe.wrap) swipe.wrap.classList.add("show-action"); // スワイプ中だけボタンを見せる
   }
   if (!swipe.horiz) return;
-  swipe.dx = Math.max(-100, Math.min(0, dx));
-  swipe.row.style.transform = `translateX(${swipe.dx}px)`; // 指に追随
+  swipe.cur = Math.max(-110, Math.min(0, swipe.base + dx));
+  swipe.row.style.transform = `translateX(${swipe.cur}px)`; // 指に追随(枠は変形させない)
 });
 
 document.addEventListener("pointerup", () => {
@@ -1099,12 +1142,14 @@ document.addEventListener("pointerup", () => {
   if (s.horiz === null) return;
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
-  s.row.style.transition = "transform .18s ease";
-  if (s.dx < -55) {
-    s.row.style.transform = "translateX(-88px)"; // アーカイブボタンを見せて止まる
+  s.row.style.transition = "transform .18s ease"; // 戻すときもアニメーション
+  if (s.cur !== null && s.cur < -55) {
+    s.row.style.transform = "translateX(-88px)";
     openSwipeRow = s.row;
   } else {
     s.row.style.transform = "";
+    if (openSwipeRow === s.row) openSwipeRow = null;
+    if (s.wrap) setTimeout(() => { if (openSwipeRow !== s.row) s.wrap.classList.remove("show-action"); }, 200);
   }
 });
 
@@ -1244,7 +1289,7 @@ function fillAsgTaskSelect() {
     state.tasks
       .filter((t) => (t.parentId || null) === parentId)
       .forEach((t) => {
-        if (!t.archived && t.type !== "summary" && !(t.type === "single" && t.done)) {
+        if (!isTaskArchived(t) && t.type !== "summary" && !(t.type === "single" && t.done)) {
           options.push(`<option value="${t.id}">${"　".repeat(depth)}${esc(t.title)}</option>`);
         }
         walk(t.id, depth + 1);
@@ -1431,9 +1476,17 @@ function renderPlan() {
   list.innerHTML = state.issues.length
     ? state.issues
         .map((g) => {
-          const roots = orderedRoots(g.id).filter((t) => visible.has(t.id));
-          if (searching && !roots.length) return "";
-          const cnt = state.tasks.filter((t) => t.issueId === g.id && visible.has(t.id)).length;
+          const issueArchived = !!g.archived;
+          /* 絞り込み:通常=未アーカイブ課題のみ / アーカイブ=アーカイブ課題+アーカイブタスクを含む課題 / すべて=全部 */
+          const roots = issueArchived
+            ? orderedRoots(g.id)
+            : orderedRoots(g.id).filter((t) => visible.has(t.id));
+          if (archFilter === "active" && issueArchived) return "";
+          if (archFilter === "archived" && !issueArchived && !roots.length) return "";
+          if (searching && !roots.length && !issueArchived) return "";
+          const cnt = issueArchived
+            ? state.tasks.filter((t) => t.issueId === g.id).length
+            : state.tasks.filter((t) => t.issueId === g.id && visible.has(t.id)).length;
           const c = issueColor(g.id);
           const open = searching || openIssueIds.has(g.id);
           let dl = "";
@@ -1454,7 +1507,7 @@ function renderPlan() {
             ${g.purpose ? `<div class="issue-purpose">目的: ${esc(g.purpose)}</div>` : ""}
             ${targets ? `<div class="issue-targets">${targets}</div>` : ""}
             <div class="issue-tasks">
-              ${roots.length ? renderTaskTree(roots, visible) : `<div class="plan-empty">${searching ? "一致するタスクはありません。" : "この課題のタスクはまだありません。"}</div>`}
+              ${roots.length ? renderTaskTree(roots, issueArchived ? null : visible) : `<div class="plan-empty">${searching ? "一致するタスクはありません。" : "この課題のタスクはまだありません。"}</div>`}
             </div>
             <div class="issue-foot">
               <button class="sbtn" data-action="task-add-issue" data-id="${g.id}">+ タスク</button>
@@ -1462,17 +1515,20 @@ function renderPlan() {
             </div>`
             : "";
           return `
-          <div class="issue-card" data-issue="${g.id}" style="border-left-color:${c}">
-            <div class="issue-top" data-action="issue-open" data-id="${g.id}">
-              <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
-              <span class="caret">${open ? "▾" : "▸"}</span>
-              <div style="flex:1;min-width:0;">
-                <div class="issue-title">${esc(g.title)}</div>
-                ${!open ? `<div class="issue-purpose">タスク ${cnt}件</div>` : ""}
+          <div class="swipe-wrap${issueArchived ? "" : " swipeable"}">
+            ${issueArchived ? "" : `<div class="swipe-action"><button data-action="issue-archive" data-id="${g.id}">📦<br>アーカイブ</button></div>`}
+            <div class="issue-card swipe-target" data-issue="${g.id}" style="border-left-color:${c}">
+              <div class="issue-top" data-action="issue-open" data-id="${g.id}">
+                <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
+                <span class="caret">${open ? "▾" : "▸"}</span>
+                <div style="flex:1;min-width:0;">
+                  <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)}</div>
+                  ${!open ? `<div class="issue-purpose">タスク ${cnt}件</div>` : ""}
+                </div>
+                ${issueArchived ? `<button class="sbtn" data-action="issue-unarchive" data-id="${g.id}">解除</button>` : dl}
               </div>
-              ${dl}
+              ${body}
             </div>
-            ${body}
           </div>`;
         })
         .join("")
@@ -1487,6 +1543,18 @@ function renderPlan() {
 }
 
 /* ---------- アーカイブ ---------- */
+function archiveIssue(id) {
+  const g = issueById(id);
+  if (!g) return;
+  g.archived = true;
+  save();
+  renderPlan();
+  showSnack("課題をアーカイブしました", "キャンセル", () => {
+    const x = issueById(id);
+    if (x) { x.archived = false; save(); renderPlan(); }
+  });
+}
+
 function archiveTask(id) {
   const t = taskById(id);
   if (!t) return;
@@ -1751,6 +1819,22 @@ function saveTaskForm() {
   }
   materializeToday();
   save();
+  /* 保存した行が確実に見える状態にする(祖先の展開・絞り込みの解除) */
+  {
+    let anc = data.parentId ? taskById(data.parentId) : null;
+    while (anc) {
+      collapsedIds.delete(anc.id);
+      anc = anc.parentId ? taskById(anc.parentId) : null;
+    }
+    saveCollapsed();
+    const savedTask = taskById(savedId);
+    const q = searchQuery.trim().toLowerCase();
+    if (q && savedTask && !savedTask.title.toLowerCase().includes(q)) searchQuery = "";
+    if (archFilter === "archived" && savedTask && !savedTask.archived) {
+      archFilter = "active";
+      localStorage.setItem("hisho:ui:archfilter", archFilter);
+    }
+  }
   renderPlan();
   /* 保存したタスクの位置までスクロールして一瞬ハイライト */
   requestAnimationFrame(() => {
@@ -1926,6 +2010,7 @@ async function pushSync(manual) {
     setSyncMsg("同期に失敗しました(URLと通信環境を確認)", true);
   }
   syncing = false;
+  updateSyncWarn(); // 同期終了後にバナー表示を更新
 }
 
 /* 取得→必要なら送信(起動時・復帰時・手動) */
@@ -1947,9 +2032,11 @@ async function fullSync(manual) {
   } catch (e) {
     setSyncMsg("シートからの取得に失敗しました", true);
     syncing = false;
+    updateSyncWarn();
     return;
   }
   syncing = false;
+  updateSyncWarn();
   if (pulled) {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
     setSyncMsg(syncStatusLabel());
@@ -2008,8 +2095,8 @@ function tick() {
   const run = runningAsg();
   const over = !!(run && isOver(run));
   updateMiniTimer();
-  if (run && over && Date.now() - lastBeep > 60000) {
-    lastBeep = Date.now();
+  if (run && over && overNotifiedId !== run.id) {
+    overNotifiedId = run.id; // 1回の開始に対して1回だけ通知
     beep();
     notify("見積時間を超過しました", `「${asgTitle(run)}」を切り上げるか、続行するか選んでください`);
   }
@@ -2159,9 +2246,32 @@ document.addEventListener("click", (e) => {
   } else if (action === "task-save") saveTaskForm();
   else if (action === "task-delete") {
     if (confirm("このタスクを削除しますか?(子タスクは1段上に移動します)")) {
+      /* 削除前に、スクロール先のアンカー(親→隣のタスク→課題)を決めておく */
+      const delTask = taskById(editingTaskId);
+      let anchorTask = null;
+      let anchorIssue = null;
+      if (delTask) {
+        anchorIssue = delTask.issueId || null;
+        if (delTask.parentId) {
+          anchorTask = delTask.parentId;
+        } else {
+          const sibs = orderedRoots(delTask.issueId || null).filter((x) => x.id !== delTask.id);
+          const all = orderedRoots(delTask.issueId || null);
+          const idx = all.findIndex((x) => x.id === delTask.id);
+          const near = all[idx - 1] || all[idx + 1] || sibs[0] || null;
+          anchorTask = near ? near.id : null;
+        }
+      }
       removeTaskDef(editingTaskId);
       editingTaskId = null;
       document.getElementById("task-form").classList.add("hidden");
+      requestAnimationFrame(() => {
+        const el =
+          (anchorTask && document.querySelector(`.p-row[data-task="${anchorTask}"]`)) ||
+          (anchorIssue && document.querySelector(`.issue-card[data-issue="${anchorIssue}"]`)) ||
+          document.getElementById("task-tree");
+        if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
     }
   }
 
@@ -2187,6 +2297,11 @@ document.addEventListener("click", (e) => {
     if (t) { t.done = false; t.archived = false; save(); renderPlan(); }
   } else if (action === "task-archive") {
     if (!suppressClick) archiveTask(id);
+  } else if (action === "issue-archive") {
+    if (!suppressClick) archiveIssue(id);
+  } else if (action === "issue-unarchive") {
+    const g = issueById(id);
+    if (g) { g.archived = false; save(); renderPlan(); }
   } else if (action === "task-unarchive") {
     const t = taskById(id);
     if (t) { t.archived = false; save(); renderPlan(); }
@@ -2234,9 +2349,9 @@ document.addEventListener("input", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
-  if (e.target.id === "g-showdone") {
-    showDone = e.target.checked;
-    localStorage.setItem("hisho:ui:showdone", showDone ? "1" : "0");
+  if (e.target.id === "g-showarch") {
+    showArch = e.target.checked;
+    localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
     renderGantt();
   }
   if (e.target.id === "a-task") {

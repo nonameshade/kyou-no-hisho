@@ -1039,3 +1039,23 @@ input[type="date"], input[type="time"] {
   from { transform: translateX(-50%) translateY(12px); opacity: 0; }
   to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
+
+/* ---------- フェーズ13:スワイプ改善・ヘッダー固定 ---------- */
+/* カードは枠内で変形せず、そのまま画面外へスライドする */
+.swipe-wrap { overflow: visible; }
+.swipe-wrap .issue-card { margin-bottom: 0; }
+
+/* スクロール中のちらつき防止:スワイプ中と開いている間だけボタンを表示 */
+.swipe-action { visibility: hidden; }
+.swipe-wrap.show-action .swipe-action { visibility: visible; }
+
+/* 日付ヘッダーの上部固定(浮いているときの見た目) */
+.g-trow.g-sh, .g-side .g-scell.g-sh {
+  position: relative;
+  z-index: 4;
+  background: var(--surface);
+  will-change: transform;
+}
+.g-trow.g-sh.floating, .g-side .g-scell.g-sh.floating {
+  box-shadow: 0 3px 8px rgba(23,33,43,.12);
+}
