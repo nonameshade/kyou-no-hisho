@@ -909,3 +909,33 @@ input[type="date"], input[type="time"] {
 .sorting { transition: none; } /* 追随はtransformで直接動かすためアニメを切る */
 
 .g-scell .caret { width: 18px; font-size: 11px; }
+
+/* ---------- フェーズ11:備考・未割り当て・保存後ハイライト ---------- */
+#name-tip { white-space: pre-wrap; }
+
+.add-form textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  background: #FAFBFC;
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+  margin-top: 4px;
+}
+
+.g-scell.unsched { box-shadow: inset 3px 0 0 #E0A458; }
+.g-scell.unsched .g-name { color: #B0692B; }
+
+.p-row.flash {
+  animation: rowflash 1.2s ease;
+}
+@keyframes rowflash {
+  0% { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
+  100% { background: var(--surface); box-shadow: none; }
+}

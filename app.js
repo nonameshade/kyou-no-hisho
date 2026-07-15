@@ -625,7 +625,7 @@ function renderTimeline() {
     return;
   }
   box.innerHTML = list
-    .map((a) => {
+    .map((a, idx) => {
       const done = a.status === "done";
       const active = !a.virtual && cur && cur.id === a.id;
       const past = viewDate === todayKey() && !done && hmToMin(a.start) + a.estimateMin < nowMin();
@@ -633,7 +633,9 @@ function renderTimeline() {
       const t = a.taskId ? taskById(a.taskId) : null;
       const rec = a.virtual ? " ・ 🔁 自動" : t && t.type === "recurring" ? " ・ 🔁" : "";
       const crumb = a.taskId ? crumbOf(a.taskId) : "";
-      const full = crumb ? `${crumb} › ${asgTitle(a)}` : asgTitle(a);
+      const notes = t && t.notes ? t.notes : "";
+      const full = (crumb ? `${crumb} › ${asgTitle(a)}` : asgTitle(a)) + (notes ? `\n📝 ${notes}` : "");
+      const showTime = idx === 0 || list[idx - 1].start !== a.start;
       const actions = a.virtual || !editable
         ? `<span class="virtual-tag">${a.virtual ? "🔁" : "🔒"}</span>`
         : done
@@ -642,12 +644,12 @@ function renderTimeline() {
              <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""}">
-          <div class="t-time">${a.start}</div>
+          <div class="t-time">${showTime ? a.start : ""}</div>
           <div class="t-dot"></div>
           <div class="t-card">
             <div class="t-main">
               <div class="t-title" data-action="g-showname" data-name="${esc(full)}">${crumb ? `<span class="crumb">${esc(crumb)} › </span>` : ""}${esc(asgTitle(a))}</div>
-              <div class="t-sub">見積 ${a.estimateMin}分${spent}${rec}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
+              <div class="t-sub">見積 ${a.estimateMin}分${spent}${rec}${notes ? " ・ 📝" : ""}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
             </div>
             <div class="t-actions">${actions}</div>
           </div>
@@ -819,9 +821,15 @@ function renderGantt() {
           const caretG = children.length
             ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsedG ? "▸" : "▾"}</button>`
             : `<span class="caret ghost"></span>`;
+          const unsched =
+            (t.type === "single" || t.type === "irregular") &&
+            !t.done &&
+            !children.length &&
+            !state.assignments.some((a) => a.taskId === t.id);
+          const tipText = (crumbOf(t.id) ? crumbOf(t.id) + " › " + t.title : t.title) + (t.notes ? `\n📝 ${t.notes}` : "");
           sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""}" style="padding-left:${4 + depth * 14}px"
-                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(crumbOf(t.id) ? crumbOf(t.id) + " › " + t.title : t.title)}">
+            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" style="padding-left:${4 + depth * 14}px"
+                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(tipText)}">
               ${caretG}
               <span class="g-name">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
@@ -912,6 +920,14 @@ function showNameTip(text, anchor) {
     tip.id = "name-tip";
     document.body.appendChild(tip);
   }
+  /* 同じタイトルをもう一度タップしたら閉じる */
+  if (tip.style.display === "block" && showNameTip._anchor === anchor) {
+    tip.style.display = "none";
+    showNameTip._anchor = null;
+    clearTimeout(showNameTip._t);
+    return;
+  }
+  showNameTip._anchor = anchor;
   tip.textContent = text;
   tip.style.display = "block";
   /* タップした行の真下に、ページ座標で固定(スクロールに追随し、ずれが蓄積しない) */
@@ -921,7 +937,7 @@ function showNameTip(text, anchor) {
   tip.style.left = `${x}px`;
   tip.style.top = `${r.bottom + window.scrollY + 6}px`;
   clearTimeout(showNameTip._t);
-  showNameTip._t = setTimeout(() => { tip.style.display = "none"; }, 2500);
+  showNameTip._t = setTimeout(() => { tip.style.display = "none"; showNameTip._anchor = null; }, 4000);
 }
 
 /* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
@@ -1502,6 +1518,7 @@ function openTaskForm(task, parentId, presetIssueId) {
   document.getElementById("t-defstart").value = task ? task.defStart || "09:00" : "09:00";
   document.getElementById("t-pstart").value = task ? task.planStart || "" : "";
   document.getElementById("t-pend").value = task ? task.planEnd || "" : "";
+  document.getElementById("t-notes").value = task ? task.notes || "" : "";
   document.getElementById("t-anchor").value = todayKey();
   const rr = task && task.reserveRule;
   document.getElementById("t-rsmode").value = rr ? rr.mode : "";
@@ -1585,17 +1602,34 @@ function saveTaskForm() {
     planEnd: type === "recurring" || type === "summary" ? null : pe,
     recurrence: type === "recurring" ? readRecurrence() : null,
     reserveRule: type === "recurring" ? readReserveRule() : null,
+    notes: document.getElementById("t-notes").value.trim(),
   };
+  let savedId;
   if (editingTaskId) {
     Object.assign(taskById(editingTaskId), data);
+    savedId = editingTaskId;
   } else {
-    state.tasks.push({ id: uid("t"), done: false, createdDate: todayKey(), ...data });
+    savedId = uid("t");
+    state.tasks.push({ id: savedId, done: false, createdDate: todayKey(), ...data });
   }
   editingTaskId = null;
   document.getElementById("task-form").classList.add("hidden");
+  if (data.issueId) {
+    openIssueIds.add(data.issueId); // 保存先の課題を開いた状態にする
+    saveOpenIssues();
+  }
   materializeToday();
   save();
   renderPlan();
+  /* 保存したタスクの位置までスクロールして一瞬ハイライト */
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`.p-row[data-task="${savedId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 1200);
+    }
+  });
 }
 
 /* ---------- スプレッドシート同期(双方向) ---------- */
@@ -1916,7 +1950,7 @@ document.addEventListener("click", (e) => {
   /* ガント */
   else if (action === "g-prev") { gStart = addDays(gStart, -14); renderGantt(); }
   else if (action === "g-next") { gStart = addDays(gStart, 14); renderGantt(); }
-  else if (action === "g-today") { gStart = addDays(todayKey(), -7); renderGantt(); }
+  else if (action === "g-today") { gStart = addDays(todayKey(), -7); selDate = todayKey(); renderGantt(); }
   else if (action === "g-selday") {
     selDate = btn.dataset.date;
     document.getElementById("asg-form").classList.add("hidden");

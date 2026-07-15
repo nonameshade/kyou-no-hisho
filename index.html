@@ -114,6 +114,7 @@
             <div class="help-item"><span class="mark ares-m">○</span>周期タスクの自動予備日(タスク編集の予備日ルールで設定)</div>
             <div class="help-item"><span style="font-size:13px;">↔</span>●や○は横にドラッグすると日付を移動できます</div>
             <div class="help-item"><span style="font-size:13px;">▦</span>日付や見積合計をタップすると、下にその日の詳細が開きます</div>
+            <div class="help-item"><span style="color:#B0692B;font-weight:700;">名</span>オレンジ色のタスク名は、まだカレンダーに予定(●)が1つもないタスクです</div>
           </div>
           <div class="btn-row">
             <button class="btn solid" data-action="g-help-close">閉じる</button>
@@ -291,6 +292,10 @@
             </label>
           </div>
         </div>
+
+        <label class="f-label">備考
+          <textarea id="t-notes" rows="3" placeholder="メモや注意点(今日タブのチップに表示されます)" maxlength="500"></textarea>
+        </label>
 
         <div class="btn-row">
           <button class="btn" data-action="task-cancel">やめる</button>
