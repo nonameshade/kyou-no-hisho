@@ -974,6 +974,34 @@ function showNameTip(text, anchor) {
 
 /* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
 let sortDrag = null;
+let sortAutoScrollSpeed = 0;
+let sortAutoScrollRAF = null;
+
+function sortAutoScrollTick() {
+  if (!sortDrag || !sortAutoScrollSpeed) { sortAutoScrollRAF = null; return; }
+  window.scrollBy(0, sortAutoScrollSpeed);
+  sortAutoScrollRAF = requestAnimationFrame(sortAutoScrollTick);
+}
+
+/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする */
+function updateSortAutoScroll(clientY) {
+  const EDGE = 70; // この距離まで端に近づいたらスクロール開始
+  const MAX_SPEED = 9; // 最大速度(px/フレーム)
+  const vh = window.innerHeight;
+  let speed = 0;
+  if (clientY < EDGE) {
+    speed = -MAX_SPEED * (1 - clientY / EDGE);
+  } else if (clientY > vh - EDGE) {
+    speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
+  }
+  sortAutoScrollSpeed = speed;
+  if (speed && !sortAutoScrollRAF) sortAutoScrollRAF = requestAnimationFrame(sortAutoScrollTick);
+}
+
+function stopSortAutoScroll() {
+  sortAutoScrollSpeed = 0;
+  if (sortAutoScrollRAF) { cancelAnimationFrame(sortAutoScrollRAF); sortAutoScrollRAF = null; }
+}
 
 function sortCandidates(d) {
   if (d.type === "issue") {
@@ -1029,6 +1057,7 @@ document.addEventListener("pointermove", (e) => {
   if (!sortDrag.moved) return;
   /* カードがポインタに追随して動く */
   sortDrag.el.style.transform = `translateY(${e.clientY - sortDrag.py}px) scale(1.02)`;
+  updateSortAutoScroll(e.clientY);
   const cands = sortCandidates(sortDrag);
   if (!cands.length) return;
   /* ポインタ位置と各要素の中央を比べて挿入位置を決める(上下で対称) */
@@ -1051,6 +1080,7 @@ document.addEventListener("pointerup", () => {
   if (!sortDrag) return;
   const d = sortDrag;
   sortDrag = null;
+  stopSortAutoScroll();
   d.el.classList.remove("sorting");
   d.el.classList.remove("grabbed");
   d.el.style.transform = "";

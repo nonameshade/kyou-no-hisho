@@ -865,8 +865,8 @@ input[type="date"], input[type="time"] {
   transform: scale(1.02);
   box-shadow: 0 10px 26px rgba(23,33,43,.28);
   position: relative;
-  z-index: 5;
 }
+.swipe-target.sorting, .swipe-target.grabbed { z-index: 5; }
 #drop-line {
   height: 4px;
   border-radius: 2px;
@@ -904,7 +904,6 @@ input[type="date"], input[type="time"] {
   transform: scale(1.02);
   box-shadow: 0 6px 18px rgba(23,33,43,.2);
   position: relative;
-  z-index: 5;
 }
 .sorting { transition: none; } /* 追随はtransformで直接動かすためアニメを切る */
 
