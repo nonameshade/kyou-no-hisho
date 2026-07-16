@@ -1975,7 +1975,7 @@ async function pullSync() {
 }
 
 /* シートへ書き込み(送信) */
-async function pushSync(manual) {
+async function pushSync(manual, useKeepalive) {
   if (!syncConfigured()) {
     if (manual) setSyncMsg("先にURLと合言葉を保存してください", true);
     return;
@@ -1988,15 +1988,19 @@ async function pushSync(manual) {
   syncing = true;
   setSyncMsg("同期中…");
   try {
+    const body = JSON.stringify({
+      token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
+      updatedAt: state.updatedAt || 0,
+      state,
+      readable: readablePayload(),
+    });
+    // keepalive付きfetchはボディが64KBを超えると送信自体が失敗する仕様のため、
+    // タブを閉じる瞬間の即時送信(useKeepalive)でもサイズが収まる時だけ付ける
+    const canKeepalive = !!useKeepalive && new Blob([body]).size < 65536;
     const res = await fetch(localStorage.getItem(SYNC_URL_KEY), {
       method: "POST",
-      keepalive: true,
-      body: JSON.stringify({
-        token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
-        updatedAt: state.updatedAt || 0,
-        state,
-        readable: readablePayload(),
-      }),
+      keepalive: canKeepalive,
+      body,
     });
     const data = await res.json();
     if (data && data.ok) {
@@ -2369,7 +2373,7 @@ document.addEventListener("visibilitychange", async () => {
     /* 閉じる・切り替えの瞬間、未送信があれば即時送信(keepaliveで送信は継続される) */
     if (syncConfigured() && navigator.onLine && localStorage.getItem(DIRTY_KEY) === "1") {
       clearTimeout(syncTimer);
-      pushSync(false);
+      pushSync(false, true);
     }
     return;
   }
