@@ -980,6 +980,9 @@ let sortAutoScrollRAF = null;
 function sortAutoScrollTick() {
   if (!sortDrag || !sortAutoScrollSpeed) { sortAutoScrollRAF = null; return; }
   window.scrollBy(0, sortAutoScrollSpeed);
+  /* ポインタが止まっていてもページだけ動く分、基準点をずらしてカードを指の位置に留める */
+  sortDrag.py -= sortAutoScrollSpeed;
+  applySortDragPosition();
   sortAutoScrollRAF = requestAnimationFrame(sortAutoScrollTick);
 }
 
@@ -1041,6 +1044,7 @@ document.addEventListener("pointerdown", (e) => {
     id: issueEl ? issueEl.dataset.issue : taskEl.dataset.task,
     el: issueEl || taskEl,
     py: e.clientY,
+    curY: e.clientY,
     moved: false,
     idx: null,
   };
@@ -1048,23 +1052,16 @@ document.addEventListener("pointerdown", (e) => {
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
 });
 
-document.addEventListener("pointermove", (e) => {
-  if (!sortDrag) return;
-  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 6) {
-    sortDrag.moved = true;
-    sortDrag.el.classList.add("sorting");
-  }
-  if (!sortDrag.moved) return;
-  /* カードがポインタに追随して動く */
-  sortDrag.el.style.transform = `translateY(${e.clientY - sortDrag.py}px) scale(1.02)`;
-  updateSortAutoScroll(e.clientY);
+/* カードをポインタ位置に合わせて動かし、挿入ラインを更新する(自動スクロール中も毎フレーム呼ぶ) */
+function applySortDragPosition() {
+  sortDrag.el.style.transform = `translateY(${sortDrag.curY - sortDrag.py}px) scale(1.02)`;
   const cands = sortCandidates(sortDrag);
   if (!cands.length) return;
   /* ポインタ位置と各要素の中央を比べて挿入位置を決める(上下で対称) */
   let idx = 0;
   cands.forEach((el) => {
     const r = el.getBoundingClientRect();
-    if (r.top + r.height / 2 < e.clientY) idx++;
+    if (r.top + r.height / 2 < sortDrag.curY) idx++;
   });
   sortDrag.idx = idx;
   const line = getDropLine();
@@ -1074,6 +1071,18 @@ document.addEventListener("pointermove", (e) => {
     const last = cands[cands.length - 1];
     last.parentNode.insertBefore(line, last.nextSibling);
   }
+}
+
+document.addEventListener("pointermove", (e) => {
+  if (!sortDrag) return;
+  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 6) {
+    sortDrag.moved = true;
+    sortDrag.el.classList.add("sorting");
+  }
+  if (!sortDrag.moved) return;
+  sortDrag.curY = e.clientY;
+  updateSortAutoScroll(e.clientY);
+  applySortDragPosition();
 });
 
 document.addEventListener("pointerup", () => {
