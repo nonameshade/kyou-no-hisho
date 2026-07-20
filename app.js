@@ -2284,8 +2284,16 @@ document.addEventListener("click", (e) => {
   else if (action === "task-child") openTaskForm(null, id);
   else if (action === "task-edit") openTaskForm(taskById(id), null);
   else if (action === "task-cancel") {
+    const cancelledId = editingTaskId;
     editingTaskId = null;
     document.getElementById("task-form").classList.add("hidden");
+    /* 新規追加(元のタスクがない)ときは何もしない。編集を取りやめた時だけ元の行へ戻す */
+    if (cancelledId) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`.p-row[data-task="${cancelledId}"]`);
+        if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
   } else if (action === "task-save") saveTaskForm();
   else if (action === "task-delete") {
     if (confirm("このタスクを削除しますか?(子タスクは1段上に移動します)")) {
