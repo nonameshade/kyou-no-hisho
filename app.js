@@ -1432,12 +1432,12 @@ let archFilter = localStorage.getItem("hisho:ui:archfilter") || "active";
 
 function computeVisibleTasks() {
   const q = searchQuery.trim().toLowerCase();
+  const archOkOf = (t) =>
+    archFilter === "all" ? true : archFilter === "archived" ? !!t.archived : !t.archived;
   const base = new Set();
   state.tasks.forEach((t) => {
-    const archOk =
-      archFilter === "all" ? true : archFilter === "archived" ? !!t.archived : !t.archived;
     const qOk = !q || t.title.toLowerCase().includes(q);
-    if (archOk && qOk) base.add(t.id);
+    if (archOkOf(t) && qOk) base.add(t.id);
   });
   /* マッチしたタスクの祖先は文脈として表示する */
   const visible = new Set(base);
@@ -1449,6 +1449,18 @@ function computeVisibleTasks() {
       p = p.parentId ? taskById(p.parentId) : null;
     }
   });
+  /* 親タスクがマッチした場合、その子タスクも検索結果としてヒットさせる */
+  if (q) {
+    const addChildren = (id) => {
+      state.tasks.forEach((c) => {
+        if (c.parentId === id && archOkOf(c) && !visible.has(c.id)) {
+          visible.add(c.id);
+          addChildren(c.id);
+        }
+      });
+    };
+    base.forEach((id) => addChildren(id));
+  }
   return visible;
 }
 
