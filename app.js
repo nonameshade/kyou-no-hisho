@@ -59,6 +59,7 @@ let renderedCurrentId = null;
 let renderedOverrun = false;
 let view = "today";
 let editingTaskId = null;
+let taskFormReturnAnchor = null; // キャンセル時に戻る行のid(編集なら本人、子タスク追加なら親)
 let editingIssueId = null;
 let editingAsgId = null;
 let selDate = todayKey();
@@ -1741,6 +1742,7 @@ function updateRecVisibility() {
 
 function openTaskForm(task, parentId, presetIssueId) {
   editingTaskId = task ? task.id : null;
+  taskFormReturnAnchor = task ? task.id : (parentId || null);
   fillParentGoalSelects(editingTaskId);
   document.getElementById("task-form-title").textContent = task ? "タスクを編集" : "タスクを追加";
   document.getElementById("t-title").value = task ? task.title : "";
@@ -2284,13 +2286,15 @@ document.addEventListener("click", (e) => {
   else if (action === "task-child") openTaskForm(null, id);
   else if (action === "task-edit") openTaskForm(taskById(id), null);
   else if (action === "task-cancel") {
-    const cancelledId = editingTaskId;
+    const anchorId = taskFormReturnAnchor;
     editingTaskId = null;
+    taskFormReturnAnchor = null;
     document.getElementById("task-form").classList.add("hidden");
-    /* 新規追加(元のタスクがない)ときは何もしない。編集を取りやめた時だけ元の行へ戻す */
-    if (cancelledId) {
+    /* 戻り先がない(親を持たない新規追加)ときは何もしない。
+       編集の取りやめは本人の行へ、子タスク追加の取りやめは親の行へ戻す */
+    if (anchorId) {
       requestAnimationFrame(() => {
-        const el = document.querySelector(`.p-row[data-task="${cancelledId}"]`);
+        const el = document.querySelector(`.p-row[data-task="${anchorId}"]`);
         if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
       });
     }
