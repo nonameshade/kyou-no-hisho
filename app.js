@@ -596,6 +596,9 @@ function renderHero() {
   document.body.classList.toggle("overrun", !!over);
 
   const crumb = cur.taskId ? crumbOf(cur.taskId) : "";
+  const t = cur.taskId ? taskById(cur.taskId) : null;
+  const notes = t && t.notes ? t.notes : "";
+  const full = (crumb ? `${crumb} › ${asgTitle(cur)}` : asgTitle(cur)) + (notes ? `\n📝 ${notes}` : "");
   const eyebrow = over ? "⚠ 見積時間を超過しています" : mine ? "作業中" : "次にやること";
   const buttons = mine
     ? `<button class="btn solid" data-action="finish" data-id="${cur.id}">完了にする</button>
@@ -603,7 +606,7 @@ function renderHero() {
     : `<button class="btn solid" data-action="start" data-id="${cur.id}">作業を開始</button>`;
 
   hero.innerHTML = `
-    <div class="hero ${over ? "overrun" : ""}">
+    <div class="hero ${over ? "overrun" : ""}" data-action="g-showname" data-name="${esc(full)}">
       <div class="hero-eyebrow">${eyebrow}</div>
       ${crumb ? `<div class="hero-crumb">${esc(crumb)} ›</div>` : ""}
       <div class="hero-title">${esc(asgTitle(cur))}</div>
