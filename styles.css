@@ -24,6 +24,19 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* スマホ標準のタップ時フラッシュ(灰色ハイライト)を消し、下のカスタムhover/activeに統一する */
+button, [data-action] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- ボタンのマウスhover・クリック時の変化 ---------- */
+button:not(:disabled) { transition: transform .08s ease, filter .08s ease; }
+@media (hover: hover) and (pointer: fine) {
+  button:not(:disabled):hover { filter: brightness(0.95); }
+}
+button:not(:disabled):active { filter: brightness(0.9); transform: scale(0.97); }
+#fab:not(:disabled):active { transform: translateX(-50%) scale(0.97); }
+
 body.overrun { background: var(--alert-soft); }
 
 .wrap {
@@ -43,7 +56,7 @@ body.overrun { background: var(--alert-soft); }
 }
 .app-label { font-size: 13px; color: var(--muted); letter-spacing: .08em; }
 .date { font-size: 22px; font-weight: 700; }
-.stats { text-align: right; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.stats { display: flex; gap: 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 
 /* ---------- 秘書カード ---------- */
 .hero {
@@ -208,13 +221,12 @@ body.overrun { background: var(--alert-soft); }
 }
 
 /* ---------- 同期(フェーズ2) ---------- */
-.top-right { text-align: right; }
 .sync-status {
   font-size: 11px;
   color: var(--accent);
-  margin-top: 4px;
   cursor: pointer;
   text-decoration: underline dotted;
+  white-space: nowrap;
 }
 .sync-status.err { color: var(--alert); }
 .f-label { display: block; font-size: 11.5px; color: var(--muted); margin-top: 10px; }
@@ -245,7 +257,6 @@ body.overrun { background: var(--alert-soft); }
 }
 
 body[data-view="plan"] .wrap { max-width: 760px; }
-body[data-view="plan"] #fab { display: none; }
 
 .plan-block { margin-bottom: 26px; }
 .plan-head {
@@ -383,7 +394,6 @@ body[data-view="cal"] #fab { display: none; }
 
 /* ---------- ガント(フェーズ3c) ---------- */
 body[data-view="gantt"] .wrap { max-width: 980px; }
-body[data-view="gantt"] #fab { display: none; }
 
 #gantt {
   overflow-x: auto;
@@ -828,6 +838,17 @@ input[type="date"], input[type="time"] {
   display: flex;
   flex-direction: column;
 }
+/* 残り・完了・同期状態:同期バナーの出入りで動かないよう常時ヘッダーに固定表示 */
+#fixed-stats {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 14px;
+  padding-top: calc(8px + env(safe-area-inset-top));
+}
 #sync-warn {
   border: none;
   background: #B0692B;
@@ -835,8 +856,7 @@ input[type="date"], input[type="time"] {
   font-size: 12px;
   font-weight: 700;
   font-family: inherit;
-  padding: 8px 12px calc(8px);
-  padding-top: calc(8px + env(safe-area-inset-top));
+  padding: 8px 12px;
   cursor: pointer;
   text-align: center;
 }
@@ -855,7 +875,6 @@ input[type="date"], input[type="time"] {
   text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-#sync-warn.hidden + #mini-timer { padding-top: calc(8px + env(safe-area-inset-top)); }
 #mini-timer.over { background: var(--alert); }
 
 /* 並べ替え:掴んだカードと挿入ライン */

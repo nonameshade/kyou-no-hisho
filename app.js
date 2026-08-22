@@ -452,6 +452,13 @@ function createSingleTask(title, defStart, estimateMin) {
   return t;
 }
 
+/* 「今日に追加する」チェックの状態に合わせてフォームの見た目を切り替える */
+function updateAddFormMode() {
+  const today = document.getElementById("f-today").checked && !document.getElementById("f-today").disabled;
+  document.getElementById("add-form-title").textContent = today ? "今日のタスクを追加" : "タスクを登録";
+  document.getElementById("add-confirm-btn").textContent = today ? "今日に追加する" : "登録する";
+}
+
 function addAdhoc(title, start, estimateMin) {
   if (!execEditable(viewDate)) return;
   const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
@@ -555,7 +562,7 @@ function renderHeader() {
   if (viewDate === tk) {
     const rest = list.filter((a) => a.status !== "done").reduce((s, a) => s + a.estimateMin, 0);
     document.getElementById("stats").innerHTML =
-      `<div>残り見積 ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
+      `<div>残り ${Math.floor(rest / 60)}時間${rest % 60}分</div><div>完了 ${done} / ${list.length}</div>`;
   } else {
     const plan = list.reduce((s, a) => s + (a.estimateMin || 0), 0);
     const actual = list.reduce((s, a) => s + (a.spentSec || 0), 0);
@@ -1642,7 +1649,7 @@ function showSnack(msg, actionLabel, cb) {
 function renderAll() {
   renderHeader();
   const fab = document.getElementById("fab");
-  if (fab) fab.style.display = view === "today" && execEditable(viewDate) ? "" : "none";
+  if (fab) fab.style.display = "";
   if (view === "today") {
     const cur = currentAsg();
     renderedCurrentId = cur ? cur.id : null;
@@ -2186,6 +2193,13 @@ document.addEventListener("click", (e) => {
     document.getElementById("add-form").classList.remove("hidden");
     document.getElementById("fab").classList.add("hidden");
     document.getElementById("f-start").value = nowHM();
+    /* 今日タブで、閲覧中の日が編集可能な時だけ「今日に追加する」を選べる。それ以外はタスク登録のみ */
+    const canToday = execEditable(viewDate);
+    const todayChk = document.getElementById("f-today");
+    todayChk.checked = canToday;
+    todayChk.disabled = !canToday;
+    document.getElementById("f-today-row").classList.toggle("hidden", !canToday);
+    updateAddFormMode();
     document.getElementById("f-title").focus();
   } else if (action === "add-cancel") {
     document.getElementById("add-form").classList.add("hidden");
@@ -2193,7 +2207,16 @@ document.addEventListener("click", (e) => {
   } else if (action === "add-confirm") {
     const title = document.getElementById("f-title").value;
     if (!title.trim()) return;
-    addAdhoc(title, document.getElementById("f-start").value || nowHM(), document.getElementById("f-est").value);
+    const start = document.getElementById("f-start").value || nowHM();
+    const est = document.getElementById("f-est").value;
+    const todayChk = document.getElementById("f-today");
+    if (todayChk.checked && !todayChk.disabled) {
+      addAdhoc(title, start, est);
+    } else {
+      createSingleTask(title, start, est);
+      save();
+      renderAll();
+    }
     document.getElementById("f-title").value = "";
     document.getElementById("add-form").classList.add("hidden");
     document.getElementById("fab").classList.remove("hidden");
@@ -2419,6 +2442,7 @@ document.addEventListener("input", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
+  if (e.target.id === "f-today") updateAddFormMode();
   if (e.target.id === "g-showarch") {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");

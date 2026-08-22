@@ -16,6 +16,10 @@
 </head>
 <body>
   <div id="fixedbars">
+    <div id="fixed-stats">
+      <div class="stats" id="stats"></div>
+      <div class="sync-status" id="sync-status" data-action="settings-open">⚙ 同期を設定</div>
+    </div>
     <button id="sync-warn" class="hidden" data-action="sync-now">⚠ 未同期の変更があります — タップで今すぐ同期</button>
     <button id="mini-timer" class="hidden" data-action="mini-jump"></button>
   </div>
@@ -25,10 +29,6 @@
       <div>
         <div class="app-label">今日の秘書</div>
         <div class="date" id="date-label"></div>
-      </div>
-      <div class="top-right">
-        <div class="stats" id="stats"></div>
-        <div class="sync-status" id="sync-status" data-action="settings-open">⚙ 同期を設定</div>
       </div>
     </header>
 
@@ -71,23 +71,6 @@
       <h2 class="section-label" id="timeline-label">今日のタイムライン</h2>
       <div id="timeline"></div>
       <div id="day-close"></div>
-
-      <section id="add-form" class="add-form hidden">
-        <div class="form-title">今日のタスクを追加</div>
-        <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
-        <div class="form-row">
-          <label>開始時刻
-            <input type="time" id="f-start">
-          </label>
-          <label>見積(分)
-            <input type="number" id="f-est" min="1" max="600" value="25">
-          </label>
-        </div>
-        <div class="btn-row">
-          <button class="btn" data-action="add-cancel">やめる</button>
-          <button class="btn solid" data-action="add-confirm">追加する</button>
-        </div>
-      </section>
     </div>
 
     <!-- ============ ガント(計画モード) ============ -->
@@ -320,6 +303,26 @@
       </section>
 
     </div>
+
+    <section id="add-form" class="add-form hidden">
+      <div class="form-title" id="add-form-title">タスクを追加</div>
+      <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
+      <div class="form-row">
+        <label>開始時刻
+          <input type="time" id="f-start">
+        </label>
+        <label>見積(分)
+          <input type="number" id="f-est" min="1" max="600" value="25">
+        </label>
+      </div>
+      <label class="chk" id="f-today-row" style="margin-top:10px;">
+        <input type="checkbox" id="f-today" checked>今日に追加する(オフならタスクとして登録するだけ)
+      </label>
+      <div class="btn-row">
+        <button class="btn" data-action="add-cancel">やめる</button>
+        <button class="btn solid" data-action="add-confirm" id="add-confirm-btn">追加する</button>
+      </div>
+    </section>
 
     <button id="fab" data-action="add-open">+ タスクを追加</button>
   </div>
