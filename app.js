@@ -1923,7 +1923,10 @@ const syncConfigured = () => !!localStorage.getItem(SYNC_URL_KEY);
 function syncFixedOffset() {
   const bars = document.getElementById("fixedbars");
   const wrap = document.querySelector(".wrap");
-  if (bars && wrap) wrap.style.marginTop = bars.offsetHeight ? `${bars.offsetHeight}px` : "";
+  if (!bars) return;
+  const h = bars.offsetHeight;
+  if (wrap) wrap.style.marginTop = h ? `${h}px` : "";
+  document.documentElement.style.setProperty("--fixed-h", `${h}px`); // タスク追加の全画面フォームがヘッダー直下から始まるよう共有
 }
 
 function setSyncMsg(text, isErr) {
@@ -2184,6 +2187,7 @@ document.addEventListener("click", (e) => {
   else if (action === "add-open") {
     document.getElementById("add-form").classList.remove("hidden");
     document.getElementById("fab").classList.add("hidden");
+    syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
     document.getElementById("f-start").value = nowHM();
     /* 今日タブで、閲覧中の日が編集可能な時だけ「今日に追加する」を選べる。それ以外はタスク登録のみ */
     const canToday = execEditable(viewDate);
