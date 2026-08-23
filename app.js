@@ -1926,22 +1926,14 @@ function syncFixedOffset() {
   if (bars && wrap) wrap.style.marginTop = bars.offsetHeight ? `${bars.offsetHeight}px` : "";
 }
 
-function updateSyncWarn() {
-  const el = document.getElementById("sync-warn");
-  if (!el) return;
-  const busy = typeof syncing !== "undefined" && syncing;
-  const show = syncConfigured() && (localStorage.getItem(DIRTY_KEY) === "1" || busy);
-  el.textContent = busy ? "⏳ 同期しています…" : "⚠ 未同期の変更があります — タップで今すぐ同期";
-  el.classList.toggle("hidden", !show);
-  syncFixedOffset();
-}
-
 function setSyncMsg(text, isErr) {
-  updateSyncWarn();
+  syncFixedOffset();
   const el = document.getElementById("sync-status");
   if (el) {
     el.textContent = text;
-    el.classList.toggle("err", !!isErr);
+    /* 同期中でないのに未送信が残っている状態も、エラーと同じ赤字で目立たせる */
+    const dirty = !syncing && localStorage.getItem(DIRTY_KEY) === "1";
+    el.classList.toggle("err", !!isErr || dirty);
   }
   const m = document.getElementById("settings-msg");
   const ov = document.getElementById("settings-overlay");
@@ -2077,7 +2069,7 @@ async function pushSync(manual, useKeepalive) {
     setSyncMsg("同期に失敗しました(URLと通信環境を確認)", true);
   }
   syncing = false;
-  updateSyncWarn(); // 同期終了後にバナー表示を更新
+  syncFixedOffset(); // 同期終了後にミニタイマー等との高さ調整を更新
 }
 
 /* 取得→必要なら送信(起動時・復帰時・手動) */
@@ -2099,11 +2091,11 @@ async function fullSync(manual) {
   } catch (e) {
     setSyncMsg("シートからの取得に失敗しました", true);
     syncing = false;
-    updateSyncWarn();
+    syncFixedOffset();
     return;
   }
   syncing = false;
-  updateSyncWarn();
+  syncFixedOffset();
   if (pulled) {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
     setSyncMsg(syncStatusLabel());
@@ -2483,7 +2475,6 @@ materializeToday();
 document.body.dataset.view = "today";
 renderAll();
 setSyncMsg(syncStatusLabel());
-updateSyncWarn();
 fullSync(false);
 setInterval(tick, 1000);
 

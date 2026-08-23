@@ -228,7 +228,7 @@ body.overrun { background: var(--alert-soft); }
   text-decoration: underline dotted;
   white-space: nowrap;
 }
-.sync-status.err { color: var(--alert); }
+.sync-status.err { color: var(--alert); font-weight: 700; }
 .f-label { display: block; font-size: 11.5px; color: var(--muted); margin-top: 10px; }
 .f-label input { margin-top: 4px; }
 
@@ -848,17 +848,6 @@ input[type="date"], input[type="time"] {
   border-bottom: 1px solid var(--line);
   padding: 8px 14px;
   padding-top: calc(8px + env(safe-area-inset-top));
-}
-#sync-warn {
-  border: none;
-  background: #B0692B;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  font-family: inherit;
-  padding: 8px 12px;
-  cursor: pointer;
-  text-align: center;
 }
 #mini-timer {
   border: none;
