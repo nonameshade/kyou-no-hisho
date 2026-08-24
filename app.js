@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v33"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v34"; // sw.jsのCACHE版数と揃えて更新すること
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -750,7 +750,7 @@ function renderTimeline() {
 
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
 let tlPending = null; // 長押し判定待ち { item, px, py }
-let tlDrag = null; // ドラッグ中 { el, id, estimateMin, height, py, curY, others, gapIndex }
+let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
 let tlAutoScrollRAF = null;
@@ -766,6 +766,9 @@ function tlComputeStart(above, below, estimateMin) {
   return Math.max(0, below.start - estimateMin); // ルール3(上が無い)
 }
 
+/* gapIndexに応じて他のカードをずらして隙間を空け、開始時刻プレビューを更新する。
+   掴んだ直後(まだ指を動かしていない時)はgapIndexが元の位置のままなので、
+   他のカードは動かない。実際にドラッグして位置が変わった時だけ動く */
 function tlApplyGap(gapIndex) {
   tlDrag.others.forEach((o, i) => {
     o.el.style.transform = i >= gapIndex ? `translateY(${tlDrag.height}px)` : "";
@@ -778,18 +781,21 @@ function tlApplyGap(gapIndex) {
   if (timeEl && startMin !== null) timeEl.textContent = minToHm(startMin);
 }
 
-/* 現在の指位置(tlDrag.curY)に合わせてカードの見た目とgapを更新する(自動スクロール中も呼ぶ) */
+/* 現在の指位置(tlDrag.curY)に合わせてカードの見た目とgapIndexを更新する(自動スクロール中も呼ぶ)。
+   ドラッグ中のカードはposition:fixedなのでスクロールしても指との相対位置は変わらず、
+   py側の補正は不要。他のカード(others)は通常のフローなのでスクロール量ぶんだけ
+   見かけの位置がずれるため、比較時にそのぶんを差し引く */
 function tlUpdateDragVisual() {
   tlDrag.el.style.transform = `translateY(${tlDrag.curY - tlDrag.py}px)`;
+  const scrolled = window.scrollY - tlDrag.scrollStart;
   let idx = 0;
-  tlDrag.others.forEach((o) => { if (o.midY < tlDrag.curY) idx++; });
+  tlDrag.others.forEach((o) => { if (o.midY - scrolled < tlDrag.curY) idx++; });
   if (idx !== tlDrag.gapIndex) tlApplyGap(idx);
 }
 
 function tlAutoScrollTick() {
   if (!tlDrag || !tlAutoScrollSpeed) { tlAutoScrollRAF = null; return; }
   window.scrollBy(0, tlAutoScrollSpeed);
-  tlDrag.py -= tlAutoScrollSpeed; // ポインタが止まっていてもページだけ動く分を補正
   tlUpdateDragVisual();
   tlAutoScrollRAF = requestAnimationFrame(tlAutoScrollTick);
 }
@@ -823,6 +829,8 @@ function tlStartDrag(item, clientY) {
   }
   const rect = item.getBoundingClientRect();
   const style = getComputedStyle(item);
+  const allItems = [...document.querySelectorAll("#timeline .t-item")];
+  const originalIndex = allItems.indexOf(item); // othersの中で「元々何個前にあったか」と同じ数
   tlDrag = {
     el: item,
     id: asgId,
@@ -830,7 +838,8 @@ function tlStartDrag(item, clientY) {
     height: rect.height + (parseFloat(style.marginBottom) || 0),
     py: clientY,
     curY: clientY,
-    others: [...document.querySelectorAll("#timeline .t-item")]
+    scrollStart: window.scrollY,
+    others: allItems
       .filter((el) => el !== item)
       .map((el) => {
         const r = el.getBoundingClientRect();
@@ -846,9 +855,8 @@ function tlStartDrag(item, clientY) {
   item.style.margin = "0";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
-  let idx = 0;
-  tlDrag.others.forEach((o) => { if (o.midY < clientY) idx++; });
-  tlApplyGap(idx);
+  /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする */
+  tlApplyGap(originalIndex);
 }
 
 document.addEventListener("pointerdown", (e) => {
@@ -2389,6 +2397,8 @@ function tick() {
   if (view !== "today") return;
   const cur = currentAsg();
   const curId = cur ? cur.id : null;
+  /* タイムラインのカードをドラッグ中/長押し判定中は再描画でDOMを差し替えない(ドラッグが壊れるため) */
+  if (tlDrag || tlPending) return;
   if (curId !== renderedCurrentId || over !== renderedOverrun) {
     renderAll();
   } else {

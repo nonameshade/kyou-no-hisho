@@ -141,7 +141,6 @@ body.overrun { background: var(--alert-soft); }
 }
 .t-item.active .t-dot { background: var(--accent); border-color: var(--accent); }
 .t-item.done .t-dot { background: var(--done); border-color: var(--done); }
-.t-item.conflict .t-dot { background: var(--alert); border-color: var(--alert); }
 
 .t-card {
   background: var(--surface);
@@ -153,7 +152,7 @@ body.overrun { background: var(--alert-soft); }
   align-items: center;
   gap: 8px;
 }
-.t-item.conflict .t-card { background: var(--alert-soft); border-color: var(--alert); }
+.t-item.conflict .t-card { background: var(--alert-soft); }
 .t-item.active .t-card { background: var(--accent-soft); border-color: var(--accent); }
 .t-item.done .t-card { opacity: .55; }
 
