@@ -26,7 +26,6 @@
 
     <header class="topbar">
       <div>
-        <div class="app-label">今日の秘書</div>
         <div class="date" id="date-label"></div>
       </div>
     </header>
@@ -67,7 +66,7 @@
         <button class="sbtn muted" data-action="d-next">翌日 ▶</button>
       </div>
       <section id="hero"></section>
-      <h2 class="section-label" id="timeline-label">今日のタイムライン</h2>
+      <h2 class="section-label" id="timeline-label">タイムライン</h2>
       <div id="timeline"></div>
       <div id="day-close"></div>
     </div>
@@ -304,7 +303,7 @@
     </div>
 
     <section id="add-form" class="add-form hidden">
-      <div class="form-title" id="add-form-title">タスクを追加</div>
+      <div class="form-title">タスク追加</div>
       <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
       <div class="form-row">
         <label>開始時刻
@@ -318,8 +317,8 @@
         <input type="checkbox" id="f-today" checked>今日に追加する(オフならタスクとして登録するだけ)
       </label>
       <div class="btn-row">
-        <button class="btn" data-action="add-cancel">やめる</button>
-        <button class="btn solid" data-action="add-confirm" id="add-confirm-btn">追加する</button>
+        <button class="btn" data-action="add-cancel">キャンセル</button>
+        <button class="btn solid" data-action="add-confirm">保存</button>
       </div>
     </section>
 

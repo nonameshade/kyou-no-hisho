@@ -452,13 +452,6 @@ function createSingleTask(title, defStart, estimateMin) {
   return t;
 }
 
-/* 「今日に追加する」チェックの状態に合わせてフォームの見た目を切り替える */
-function updateAddFormMode() {
-  const today = document.getElementById("f-today").checked && !document.getElementById("f-today").disabled;
-  document.getElementById("add-form-title").textContent = today ? "今日のタスクを追加" : "タスクを登録";
-  document.getElementById("add-confirm-btn").textContent = today ? "今日に追加する" : "登録する";
-}
-
 function addAdhoc(title, start, estimateMin) {
   if (!execEditable(viewDate)) return;
   const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
@@ -556,7 +549,7 @@ function renderHeader() {
   document.getElementById("date-label").textContent =
     `${d.getMonth() + 1}月${d.getDate()}日(${youbi})${suffix}${lockMark}`;
   const tl = document.getElementById("timeline-label");
-  if (tl) tl.textContent = viewDate === tk ? "今日のタイムライン" : "この日のタイムライン";
+  if (tl) tl.textContent = "タイムライン";
   const list = dayItems(viewDate);
   const done = list.filter((a) => a.status === "done").length;
   if (viewDate === tk) {
@@ -1929,15 +1922,21 @@ function syncFixedOffset() {
   document.documentElement.style.setProperty("--fixed-h", `${h}px`); // タスク追加の全画面フォームがヘッダー直下から始まるよう共有
 }
 
-function setSyncMsg(text, isErr) {
-  syncFixedOffset();
+/* ヘッダーの同期状態は常に「未同期」「同期中・・・」「同期済み」の3種類のみ(表示幅を揃えるため) */
+function headerSyncLabel() {
+  if (syncing) return "同期中・・・";
+  if (!syncConfigured() || localStorage.getItem(DIRTY_KEY) === "1" || !localStorage.getItem(LAST_SYNC_KEY)) return "未同期";
+  return "同期済み";
+}
+
+function setSyncMsg(text) {
   const el = document.getElementById("sync-status");
   if (el) {
-    el.textContent = text;
-    /* 同期中でないのに未送信が残っている状態も、エラーと同じ赤字で目立たせる */
-    const dirty = !syncing && localStorage.getItem(DIRTY_KEY) === "1";
-    el.classList.toggle("err", !!isErr || dirty);
+    el.textContent = headerSyncLabel();
+    /* 同期中でないのに未送信が残っている状態は、赤字で目立たせる */
+    el.classList.toggle("err", !syncing && syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1");
   }
+  syncFixedOffset();
   const m = document.getElementById("settings-msg");
   const ov = document.getElementById("settings-overlay");
   if (m && ov && !ov.classList.contains("hidden")) {
@@ -1945,17 +1944,8 @@ function setSyncMsg(text, isErr) {
   }
 }
 
-function syncStatusLabel() {
-  if (!syncConfigured()) return "⚙ 同期を設定";
-  if (localStorage.getItem(DIRTY_KEY) === "1") return "未同期の変更あり";
-  const last = Number(localStorage.getItem(LAST_SYNC_KEY) || 0);
-  if (!last) return "まだ同期していません";
-  const d = new Date(last);
-  return `同期済み ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 function scheduleSync() {
-  setSyncMsg(syncStatusLabel());
+  setSyncMsg(headerSyncLabel());
   if (!syncConfigured()) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => pushSync(false), 4000);
@@ -2035,7 +2025,7 @@ async function pullSync() {
 /* シートへ書き込み(送信) */
 async function pushSync(manual, useKeepalive) {
   if (!syncConfigured()) {
-    if (manual) setSyncMsg("先にURLと合言葉を保存してください", true);
+    if (manual) setSyncMsg("先にURLと合言葉を保存してください");
     return;
   }
   if (!navigator.onLine) {
@@ -2044,7 +2034,7 @@ async function pushSync(manual, useKeepalive) {
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中…");
+  setSyncMsg("同期中・・・");
   try {
     const body = JSON.stringify({
       token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
@@ -2061,24 +2051,25 @@ async function pushSync(manual, useKeepalive) {
       body,
     });
     const data = await res.json();
+    syncing = false; // ヘッダーの表示切り替え前に必ず落としておく
     if (data && data.ok) {
       localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
       localStorage.setItem(DIRTY_KEY, "0");
-      setSyncMsg(syncStatusLabel());
+      setSyncMsg(headerSyncLabel());
     } else {
-      setSyncMsg(`同期エラー: ${(data && data.error) || "不明"}`, true);
+      setSyncMsg(`同期エラー: ${(data && data.error) || "不明"}`);
     }
   } catch (e) {
-    setSyncMsg("同期に失敗しました(URLと通信環境を確認)", true);
+    syncing = false;
+    setSyncMsg("同期に失敗しました(URLと通信環境を確認)");
   }
-  syncing = false;
-  syncFixedOffset(); // 同期終了後にミニタイマー等との高さ調整を更新
+  syncFixedOffset();
 }
 
 /* 取得→必要なら送信(起動時・復帰時・手動) */
 async function fullSync(manual) {
   if (!syncConfigured()) {
-    if (manual) setSyncMsg("先にURLと合言葉を保存してください", true);
+    if (manual) setSyncMsg("先にURLと合言葉を保存してください");
     return;
   }
   if (!navigator.onLine) {
@@ -2087,13 +2078,13 @@ async function fullSync(manual) {
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中…");
+  setSyncMsg("同期中・・・");
   let pulled = false;
   try {
     pulled = await pullSync();
   } catch (e) {
-    setSyncMsg("シートからの取得に失敗しました", true);
     syncing = false;
+    setSyncMsg("シートからの取得に失敗しました");
     syncFixedOffset();
     return;
   }
@@ -2101,13 +2092,13 @@ async function fullSync(manual) {
   syncFixedOffset();
   if (pulled) {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-    setSyncMsg(syncStatusLabel());
+    setSyncMsg(headerSyncLabel());
   }
   if (localStorage.getItem(DIRTY_KEY) === "1") {
     await pushSync(manual);
   } else {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-    setSyncMsg(syncStatusLabel());
+    setSyncMsg(headerSyncLabel());
   }
 }
 
@@ -2195,7 +2186,6 @@ document.addEventListener("click", (e) => {
     todayChk.checked = canToday;
     todayChk.disabled = !canToday;
     document.getElementById("f-today-row").classList.toggle("hidden", !canToday);
-    updateAddFormMode();
     document.getElementById("f-title").focus();
   } else if (action === "add-cancel") {
     document.getElementById("add-form").classList.add("hidden");
@@ -2414,7 +2404,7 @@ document.addEventListener("click", (e) => {
     document.getElementById("settings-msg").textContent = url
       ? "保存しました。「今すぐ同期」で動作を確認できます"
       : "同期設定を削除しました";
-    setSyncMsg(syncStatusLabel());
+    setSyncMsg(headerSyncLabel());
   } else if (action === "sync-now") fullSync(true);
   else if (action === "force-update") forceUpdate();
 });
@@ -2438,7 +2428,6 @@ document.addEventListener("input", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
-  if (e.target.id === "f-today") updateAddFormMode();
   if (e.target.id === "g-showarch") {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
@@ -2478,7 +2467,7 @@ load();
 materializeToday();
 document.body.dataset.view = "today";
 renderAll();
-setSyncMsg(syncStatusLabel());
+setSyncMsg(headerSyncLabel());
 fullSync(false);
 setInterval(tick, 1000);
 
