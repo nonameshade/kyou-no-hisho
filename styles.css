@@ -238,7 +238,7 @@ body.overrun { background: var(--alert-soft); }
 /* ---------- 同期(フェーズ2) ---------- */
 .sync-status {
   display: inline-block;
-  min-width: 6.5em;
+  min-width: 4.5em;
   font-size: 11px;
   color: var(--accent);
   cursor: pointer;

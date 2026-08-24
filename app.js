@@ -1922,9 +1922,9 @@ function syncFixedOffset() {
   document.documentElement.style.setProperty("--fixed-h", `${h}px`); // タスク追加の全画面フォームがヘッダー直下から始まるよう共有
 }
 
-/* ヘッダーの同期状態は常に「未同期」「同期中・・・」「同期済み」の3種類のみ(表示幅を揃えるため) */
+/* ヘッダーの同期状態は常に「未同期」「同期中…」「同期済み」の3種類のみ(表示幅を揃えるため) */
 function headerSyncLabel() {
-  if (syncing) return "同期中・・・";
+  if (syncing) return "同期中…";
   if (!syncConfigured() || localStorage.getItem(DIRTY_KEY) === "1" || !localStorage.getItem(LAST_SYNC_KEY)) return "未同期";
   return "同期済み";
 }
@@ -2034,7 +2034,7 @@ async function pushSync(manual, useKeepalive) {
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中・・・");
+  setSyncMsg("同期中…");
   try {
     const body = JSON.stringify({
       token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
@@ -2078,7 +2078,7 @@ async function fullSync(manual) {
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中・・・");
+  setSyncMsg("同期中…");
   let pulled = false;
   try {
     pulled = await pullSync();
