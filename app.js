@@ -626,7 +626,9 @@ function renderHero() {
 
 /* タイムラインの自動調整:開始時刻が重複するカードを見積時間ぶんずらす。
    ずらした結果が次の(重複していない)カードの開始時刻以降になってしまう場合は、
-   ひとつ前のカードと同じ開始時刻に戻す(仮想の自動予定は対象外) */
+   衝突が起きる直前のカードと同じ開始時刻に戻す。以降のカードも、その「直前のカード」を
+   基準にした計算が衝突し続ける限り、間に何枚あっても同じ開始時刻のままになる
+   (仮想の自動予定は対象外) */
 function autoAdjustTimeline() {
   if (!execEditable(viewDate)) return;
   const items = state.assignments
@@ -640,9 +642,17 @@ function autoAdjustTimeline() {
     let j = i + 1;
     while (j < items.length && origStart[j] === origStart[i]) j++;
     const nextBoundary = j < items.length ? origStart[j] : Infinity;
+    let refStart = adjStart[i];
+    let refEst = items[i].estimateMin || 0;
     for (let k = i + 1; k < j; k++) {
-      const candidate = adjStart[k - 1] + (items[k - 1].estimateMin || 0);
-      adjStart[k] = candidate >= nextBoundary ? adjStart[k - 1] : candidate;
+      const candidate = refStart + refEst;
+      if (candidate >= nextBoundary) {
+        adjStart[k] = refStart; // 基準(ref)は更新しない → 以降も同じ時刻が続く
+      } else {
+        adjStart[k] = candidate;
+        refStart = candidate;
+        refEst = items[k].estimateMin || 0;
+      }
     }
     i = j;
   }
