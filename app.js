@@ -11,6 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
+const APP_VERSION = "v31"; // sw.jsのCACHE版数と揃えて更新すること
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -22,6 +23,11 @@ const hmToMin = (hm) => {
   const [h, m] = String(hm).split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 };
+const minToHm = (m) => `${pad(Math.floor(m / 60))}:${pad(((m % 60) + 60) % 60)}`;
+/* 2つの割り当て(開始+見積)の実施時間帯が重なるか */
+const timeOverlap = (a, b) =>
+  hmToMin(a.start) < hmToMin(b.start) + b.estimateMin &&
+  hmToMin(b.start) < hmToMin(a.start) + a.estimateMin;
 const nowMin = () => {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
@@ -685,6 +691,8 @@ function renderTimeline() {
     .map((a, idx) => {
       const done = a.status === "done";
       const active = !a.virtual && cur && cur.id === a.id;
+      /* 現在時刻(緑=active)を優先し、それ以外で他のカードと理論上重なるものだけ薄い赤にする */
+      const conflict = !active && list.some((b, j) => j !== idx && timeOverlap(a, b));
       const past = viewDate === todayKey() && !done && hmToMin(a.start) + a.estimateMin < nowMin();
       const spent = !a.virtual && a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
       const t = a.taskId ? taskById(a.taskId) : null;
@@ -699,8 +707,11 @@ function renderTimeline() {
           ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
           : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
              <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
+      const draggable = !a.virtual && editable;
       return `
-        <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""}">
+        <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""} ${conflict ? "conflict" : ""}"
+             data-asg="${a.virtual ? "" : a.id}" data-draggable="${draggable ? "1" : "0"}"
+             data-start="${a.start}" data-est="${a.estimateMin}">
           <div class="t-time">${showTime ? a.start : ""}</div>
           <div class="t-dot"></div>
           <div class="t-card">
@@ -715,6 +726,111 @@ function renderTimeline() {
     .join("");
   renderDayClose();
 }
+
+/* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
+let tlPending = null; // 長押し判定待ち { item, px, py }
+let tlDrag = null; // ドラッグ中 { el, id, estimateMin, height, py, others, gapIndex }
+let tlLongPressTimer = null;
+
+/* 開始時刻(分)を計算する4ルール。above/belowはnull可、estimateMinは動かしているカードの見積 */
+function tlComputeStart(above, below, estimateMin) {
+  if (!above && !below) return null;
+  if (above) {
+    const aboveEnd = above.start + above.estimateMin;
+    if (!below || aboveEnd + estimateMin <= below.start) return aboveEnd; // ルール2/上のみ
+    return above.start; // ルール4(下と衝突するので上と同じ開始時刻)
+  }
+  return Math.max(0, below.start - estimateMin); // ルール3(上が無い)
+}
+
+function tlApplyGap(gapIndex) {
+  tlDrag.others.forEach((o, i) => {
+    o.el.style.transform = i >= gapIndex ? `translateY(${tlDrag.height}px)` : "";
+  });
+  tlDrag.gapIndex = gapIndex;
+  const above = tlDrag.others[gapIndex - 1] || null;
+  const below = tlDrag.others[gapIndex] || null;
+  const startMin = tlComputeStart(above, below, tlDrag.estimateMin);
+  const timeEl = tlDrag.el.querySelector(".t-time");
+  if (timeEl && startMin !== null) timeEl.textContent = minToHm(startMin);
+}
+
+function tlStartDrag(item, clientY) {
+  const rect = item.getBoundingClientRect();
+  const style = getComputedStyle(item);
+  tlDrag = {
+    el: item,
+    id: item.dataset.asg,
+    estimateMin: Number(item.dataset.est) || 0,
+    height: rect.height + (parseFloat(style.marginBottom) || 0),
+    py: clientY,
+    others: [...document.querySelectorAll("#timeline .t-item")]
+      .filter((el) => el !== item)
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { el, start: hmToMin(el.dataset.start), estimateMin: Number(el.dataset.est) || 0, midY: r.top + r.height / 2 };
+      }),
+    gapIndex: 0,
+  };
+  item.classList.add("tl-dragging");
+  try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
+  let idx = 0;
+  tlDrag.others.forEach((o) => { if (o.midY < clientY) idx++; });
+  tlApplyGap(idx);
+}
+
+document.addEventListener("pointerdown", (e) => {
+  const card = e.target.closest("#timeline .t-card");
+  if (!card || e.target.closest(".t-actions")) return;
+  const item = card.closest(".t-item");
+  if (!item || item.dataset.draggable !== "1") return;
+  clearTimeout(tlLongPressTimer);
+  tlPending = { item, px: e.clientX, py: e.clientY };
+  tlLongPressTimer = setTimeout(() => {
+    if (tlPending) tlStartDrag(tlPending.item, tlPending.py);
+    tlPending = null;
+  }, 450);
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (tlPending) {
+    if (Math.abs(e.clientY - tlPending.py) > 8 || Math.abs(e.clientX - tlPending.px) > 8) {
+      clearTimeout(tlLongPressTimer);
+      tlPending = null;
+    }
+    return;
+  }
+  if (!tlDrag) return;
+  e.preventDefault();
+  tlDrag.el.style.transform = `translateY(${e.clientY - tlDrag.py}px)`;
+  let idx = 0;
+  tlDrag.others.forEach((o) => { if (o.midY < e.clientY) idx++; });
+  if (idx !== tlDrag.gapIndex) tlApplyGap(idx);
+});
+
+document.addEventListener("pointerup", () => {
+  clearTimeout(tlLongPressTimer);
+  tlPending = null;
+  if (!tlDrag) return;
+  const d = tlDrag;
+  tlDrag = null;
+  d.el.classList.remove("tl-dragging");
+  d.el.style.transform = "";
+  d.others.forEach((o) => { o.el.style.transform = ""; });
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 80);
+  const above = d.others[d.gapIndex - 1] || null;
+  const below = d.others[d.gapIndex] || null;
+  const startMin = tlComputeStart(above, below, d.estimateMin);
+  if (startMin !== null && d.id) {
+    const a = state.assignments.find((x) => x.id === d.id);
+    if (a) {
+      a.start = minToHm(startMin);
+      save();
+    }
+  }
+  renderAll();
+});
 
 /* ---------- 締め(日次ロック) ---------- */
 function renderDayClose() {
@@ -2336,6 +2452,7 @@ document.addEventListener("click", (e) => {
   } else if (action === "task-add-issue") {
     openTaskForm(null, null, id);
   } else if (action === "g-showname") {
+    if (suppressClick) return;
     showNameTip(btn.dataset.name, btn);
   } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
@@ -2517,6 +2634,8 @@ load();
 materializeToday();
 document.body.dataset.view = "today";
 renderAll();
+const verEl = document.getElementById("app-version");
+if (verEl) verEl.textContent = APP_VERSION;
 setSyncMsg(headerSyncLabel());
 fullSync(false);
 setInterval(tick, 1000);

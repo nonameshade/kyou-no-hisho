@@ -125,7 +125,7 @@ body.overrun { background: var(--alert-soft); }
   background: var(--line);
 }
 
-.t-item { position: relative; margin-bottom: 12px; }
+.t-item { position: relative; margin-bottom: 12px; transition: transform .15s ease; }
 .t-time {
   position: absolute; left: -64px; top: 14px;
   width: 48px; text-align: right;
@@ -141,6 +141,7 @@ body.overrun { background: var(--alert-soft); }
 }
 .t-item.active .t-dot { background: var(--accent); border-color: var(--accent); }
 .t-item.done .t-dot { background: var(--done); border-color: var(--done); }
+.t-item.conflict .t-dot { background: var(--alert); border-color: var(--alert); }
 
 .t-card {
   background: var(--surface);
@@ -152,8 +153,18 @@ body.overrun { background: var(--alert-soft); }
   align-items: center;
   gap: 8px;
 }
+.t-item.conflict .t-card { background: var(--alert-soft); border-color: var(--alert); }
 .t-item.active .t-card { background: var(--accent-soft); border-color: var(--accent); }
 .t-item.done .t-card { opacity: .55; }
+
+/* ---------- 今日タブ:カードの長押しドラッグで時刻変更 ---------- */
+.t-item.tl-dragging {
+  transition: none;
+  z-index: 5;
+}
+.t-item.tl-dragging .t-card {
+  box-shadow: 0 10px 26px rgba(23,33,43,.28);
+}
 
 .t-main { min-width: 0; }
 .t-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -168,10 +168,11 @@ state = {
 
 ### イベント（app.js末尾に集約）
 - 巨大な `document.addEventListener("click", ...)` で `data-action` 属性を分岐。**新機能のボタンはここに追記**
-- `pointerdown/move/up` が **3系統** ある。競合しないよう注意:
+- `pointerdown/move/up` が **4系統** ある。競合しないよう注意:
   1. 並べ替えドラッグ（`.drag-h`ハンドル、`sortDrag`）
   2. スワイプでアーカイブ（`.swipe-target`、`swipe`）
   3. ガントのマーク移動（`.g-cell.has-mark`、`drag`）
+  4. 今日タブのカード長押しドラッグで開始時刻変更（`#timeline .t-card`、長押し450ms、`tlDrag`）
 - `input`（検索）、`change`（種類切替・チェックボックス）、`visibilitychange`（復帰時同期・離脱時即送信）、`scroll`（ヘッダー固定）
 
 ### 同期（Google Sheets）
