@@ -36,6 +36,7 @@ button:not(:disabled) { transition: transform .08s ease, filter .08s ease; }
 }
 button:not(:disabled):active { filter: brightness(0.9); transform: scale(0.97); }
 #fab:not(:disabled):active { transform: translateX(-50%) scale(0.97); }
+button:disabled { opacity: .4; cursor: default; }
 
 body.overrun { background: var(--alert-soft); }
 

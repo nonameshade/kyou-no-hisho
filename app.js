@@ -550,6 +550,8 @@ function renderHeader() {
     `${d.getMonth() + 1}月${d.getDate()}日(${youbi})${suffix}${lockMark}`;
   const tl = document.getElementById("timeline-label");
   if (tl) tl.textContent = "タイムライン";
+  const adjBtn = document.getElementById("timeline-adjust-btn");
+  if (adjBtn) adjBtn.disabled = !execEditable(viewDate);
   const list = dayItems(viewDate);
   const done = list.filter((a) => a.status === "done").length;
   if (viewDate === tk) {
@@ -620,6 +622,43 @@ function renderHero() {
       ${over ? `<div class="overrun-note">切り上げて次の短いタスクに移ることを検討しましょう。続ける場合はこのままで構いません。</div>` : ""}
     </div>`;
   updateTimerVisuals(cur);
+}
+
+/* タイムラインの自動調整:開始時刻が重複するカードを見積時間ぶんずらす。
+   ずらした結果が次の(重複していない)カードの開始時刻以降になってしまう場合は、
+   ひとつ前のカードと同じ開始時刻に戻す(仮想の自動予定は対象外) */
+function autoAdjustTimeline() {
+  if (!execEditable(viewDate)) return;
+  const items = state.assignments
+    .filter((a) => a.date === viewDate)
+    .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
+  if (items.length < 2) return;
+  const origStart = items.map((a) => hmToMin(a.start));
+  const adjStart = origStart.slice();
+  let i = 0;
+  while (i < items.length) {
+    let j = i + 1;
+    while (j < items.length && origStart[j] === origStart[i]) j++;
+    const nextBoundary = j < items.length ? origStart[j] : Infinity;
+    for (let k = i + 1; k < j; k++) {
+      const candidate = adjStart[k - 1] + (items[k - 1].estimateMin || 0);
+      adjStart[k] = candidate >= nextBoundary ? adjStart[k - 1] : candidate;
+    }
+    i = j;
+  }
+  let changed = false;
+  items.forEach((a, idx) => {
+    const m = adjStart[idx];
+    const hm = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+    if (hm !== a.start) {
+      a.start = hm;
+      changed = true;
+    }
+  });
+  if (changed) {
+    save();
+    renderAll();
+  }
 }
 
 function renderTimeline() {
@@ -2218,6 +2257,7 @@ document.addEventListener("click", (e) => {
   else if (action === "d-prev") { viewDate = addDays(viewDate, -1); renderAll(); }
   else if (action === "d-next") { viewDate = addDays(viewDate, 1); renderAll(); }
   else if (action === "d-today") { viewDate = todayKey(); renderAll(); }
+  else if (action === "timeline-auto-adjust") autoAdjustTimeline();
   else if (action === "day-close") {
     if (viewDate > todayKey()) return;
     if (dayList(viewDate).some((a) => a.status === "doing")) {
