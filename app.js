@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v34"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v36"; // sw.jsのCACHE版数と揃えて更新すること
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -855,8 +855,16 @@ function tlStartDrag(item, clientY) {
   item.style.margin = "0";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
-  /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする */
+  /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする。
+     .t-itemのCSSトランジションが「動いていないはずのtransform適用」まで
+     アニメーションしてしまうため、最初の1回だけ一時的にトランジションを止める */
+  tlDrag.others.forEach((o) => { o.el.style.transition = "none"; });
   tlApplyGap(originalIndex);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (tlDrag) tlDrag.others.forEach((o) => { o.el.style.transition = ""; });
+    });
+  });
 }
 
 document.addEventListener("pointerdown", (e) => {
@@ -908,7 +916,21 @@ document.addEventListener("pointerup", () => {
   const below = d.others[d.gapIndex] || null;
   const startMin = tlComputeStart(above, below, d.estimateMin);
   const a = d.id ? state.assignments.find((x) => x.id === d.id) : null;
-  if (a && startMin !== null) a.start = minToHm(startMin);
+  if (a) {
+    if (startMin !== null) a.start = minToHm(startMin);
+    /* 配列内の並び順もドロップ位置に合わせる。開始時刻が同じ(同着)場合はこの並び順で
+       表示順が決まるため、時刻のルールだけでは並び替えできない場面(同時刻同士の間へ
+       ドロップした結果、時刻が変わらない/同じになる場合)でも位置が反映されるようにする */
+    const idx = state.assignments.indexOf(a);
+    if (idx !== -1) state.assignments.splice(idx, 1);
+    const aboveA = above && above.el.dataset.asg ? state.assignments.find((x) => x.id === above.el.dataset.asg) : null;
+    const belowA = below && below.el.dataset.asg ? state.assignments.find((x) => x.id === below.el.dataset.asg) : null;
+    let insertAt;
+    if (aboveA) insertAt = state.assignments.indexOf(aboveA) + 1;
+    else if (belowA) insertAt = state.assignments.indexOf(belowA);
+    else insertAt = state.assignments.length;
+    state.assignments.splice(insertAt, 0, a);
+  }
   save(); // 周期タスクの実体化だけが起きた場合も保存する
   renderAll();
 });
@@ -2698,6 +2720,7 @@ document.addEventListener("visibilitychange", async () => {
     return;
   }
   if (document.visibilityState === "visible") {
+    if (tlDrag || tlPending) return; // ドラッグ中は再描画でDOMを差し替えない
     if (runningAsg() && navigator.wakeLock && !wakeLock) {
       try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
     }
