@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v31"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v33"; // sw.jsのCACHE版数と揃えて更新すること
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -262,6 +262,27 @@ function materializeToday() {
       }
     });
   if (changed) save();
+}
+
+/* 周期タスクの1回分(dk)だけを実体化する(他の日には影響しない)。既にあればそれを返す */
+function materializeOccurrence(taskId, dk) {
+  const existing = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
+  if (existing) return existing;
+  const t = taskById(taskId);
+  if (!t) return null;
+  const a = {
+    id: uid("a"),
+    taskId: t.id,
+    title: t.title,
+    date: dk,
+    start: t.defStart || "09:00",
+    estimateMin: t.estimateMin || 25,
+    status: "todo",
+    spentSec: 0,
+    startedAt: null,
+  };
+  state.assignments.push(a);
+  return a;
 }
 
 /* ---------- 予備日 ---------- */
@@ -707,10 +728,10 @@ function renderTimeline() {
           ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
           : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
              <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
-      const draggable = !a.virtual && editable;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""} ${conflict ? "conflict" : ""}"
-             data-asg="${a.virtual ? "" : a.id}" data-draggable="${draggable ? "1" : "0"}"
+             data-asg="${a.virtual ? "" : a.id}" data-virtual="${a.virtual ? "1" : "0"}" data-task="${a.taskId || ""}"
+             data-draggable="${editable ? "1" : "0"}"
              data-start="${a.start}" data-est="${a.estimateMin}">
           <div class="t-time">${showTime ? a.start : ""}</div>
           <div class="t-dot"></div>
@@ -729,8 +750,10 @@ function renderTimeline() {
 
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
 let tlPending = null; // 長押し判定待ち { item, px, py }
-let tlDrag = null; // ドラッグ中 { el, id, estimateMin, height, py, others, gapIndex }
+let tlDrag = null; // ドラッグ中 { el, id, estimateMin, height, py, curY, others, gapIndex }
 let tlLongPressTimer = null;
+let tlAutoScrollSpeed = 0;
+let tlAutoScrollRAF = null;
 
 /* 開始時刻(分)を計算する4ルール。above/belowはnull可、estimateMinは動かしているカードの見積 */
 function tlComputeStart(above, below, estimateMin) {
@@ -755,15 +778,58 @@ function tlApplyGap(gapIndex) {
   if (timeEl && startMin !== null) timeEl.textContent = minToHm(startMin);
 }
 
+/* 現在の指位置(tlDrag.curY)に合わせてカードの見た目とgapを更新する(自動スクロール中も呼ぶ) */
+function tlUpdateDragVisual() {
+  tlDrag.el.style.transform = `translateY(${tlDrag.curY - tlDrag.py}px)`;
+  let idx = 0;
+  tlDrag.others.forEach((o) => { if (o.midY < tlDrag.curY) idx++; });
+  if (idx !== tlDrag.gapIndex) tlApplyGap(idx);
+}
+
+function tlAutoScrollTick() {
+  if (!tlDrag || !tlAutoScrollSpeed) { tlAutoScrollRAF = null; return; }
+  window.scrollBy(0, tlAutoScrollSpeed);
+  tlDrag.py -= tlAutoScrollSpeed; // ポインタが止まっていてもページだけ動く分を補正
+  tlUpdateDragVisual();
+  tlAutoScrollRAF = requestAnimationFrame(tlAutoScrollTick);
+}
+
+/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする */
+function tlUpdateAutoScroll(clientY) {
+  const EDGE = 70;
+  const MAX_SPEED = 9;
+  const vh = window.innerHeight;
+  let speed = 0;
+  if (clientY < EDGE) speed = -MAX_SPEED * (1 - clientY / EDGE);
+  else if (clientY > vh - EDGE) speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
+  tlAutoScrollSpeed = speed;
+  if (speed && !tlAutoScrollRAF) tlAutoScrollRAF = requestAnimationFrame(tlAutoScrollTick);
+}
+
+function tlStopAutoScroll() {
+  tlAutoScrollSpeed = 0;
+  if (tlAutoScrollRAF) { cancelAnimationFrame(tlAutoScrollRAF); tlAutoScrollRAF = null; }
+}
+
 function tlStartDrag(item, clientY) {
+  let asgId = item.dataset.asg;
+  if (item.dataset.virtual === "1") {
+    /* 周期タスクの自動予定はこの1回分だけ実体化する(他の日には影響しない) */
+    const a = materializeOccurrence(item.dataset.task, viewDate);
+    if (!a) return;
+    asgId = a.id;
+    item.dataset.asg = asgId;
+    item.dataset.virtual = "0";
+  }
   const rect = item.getBoundingClientRect();
   const style = getComputedStyle(item);
   tlDrag = {
     el: item,
-    id: item.dataset.asg,
+    id: asgId,
     estimateMin: Number(item.dataset.est) || 0,
     height: rect.height + (parseFloat(style.marginBottom) || 0),
     py: clientY,
+    curY: clientY,
     others: [...document.querySelectorAll("#timeline .t-item")]
       .filter((el) => el !== item)
       .map((el) => {
@@ -772,6 +838,12 @@ function tlStartDrag(item, clientY) {
       }),
     gapIndex: 0,
   };
+  /* 元の位置に余白(隙間)が残らないよう、ドラッグ中は文書の流れから外す */
+  item.style.position = "fixed";
+  item.style.left = `${rect.left}px`;
+  item.style.top = `${rect.top}px`;
+  item.style.width = `${rect.width}px`;
+  item.style.margin = "0";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
   let idx = 0;
@@ -802,10 +874,9 @@ document.addEventListener("pointermove", (e) => {
   }
   if (!tlDrag) return;
   e.preventDefault();
-  tlDrag.el.style.transform = `translateY(${e.clientY - tlDrag.py}px)`;
-  let idx = 0;
-  tlDrag.others.forEach((o) => { if (o.midY < e.clientY) idx++; });
-  if (idx !== tlDrag.gapIndex) tlApplyGap(idx);
+  tlDrag.curY = e.clientY;
+  tlUpdateAutoScroll(e.clientY);
+  tlUpdateDragVisual();
 });
 
 document.addEventListener("pointerup", () => {
@@ -814,7 +885,13 @@ document.addEventListener("pointerup", () => {
   if (!tlDrag) return;
   const d = tlDrag;
   tlDrag = null;
+  tlStopAutoScroll();
   d.el.classList.remove("tl-dragging");
+  d.el.style.position = "";
+  d.el.style.left = "";
+  d.el.style.top = "";
+  d.el.style.width = "";
+  d.el.style.margin = "";
   d.el.style.transform = "";
   d.others.forEach((o) => { o.el.style.transform = ""; });
   suppressClick = true;
@@ -822,13 +899,9 @@ document.addEventListener("pointerup", () => {
   const above = d.others[d.gapIndex - 1] || null;
   const below = d.others[d.gapIndex] || null;
   const startMin = tlComputeStart(above, below, d.estimateMin);
-  if (startMin !== null && d.id) {
-    const a = state.assignments.find((x) => x.id === d.id);
-    if (a) {
-      a.start = minToHm(startMin);
-      save();
-    }
-  }
+  const a = d.id ? state.assignments.find((x) => x.id === d.id) : null;
+  if (a && startMin !== null) a.start = minToHm(startMin);
+  save(); // 周期タスクの実体化だけが起きた場合も保存する
   renderAll();
 });
 
@@ -2094,23 +2167,24 @@ function headerSyncLabel() {
   return "同期済";
 }
 
-function setSyncMsg(text) {
+/* 同期関連の状態はヘッダーにだけ出す(設定画面には出さない)。設定画面のメッセージ欄は
+   保存確認や「最新版に更新」の結果など、その場の操作フィードバック専用 */
+function updateHeaderSync() {
   const el = document.getElementById("sync-status");
   if (el) {
     el.textContent = headerSyncLabel();
-    /* 同期中でないのに未送信が残っている状態は、赤字で目立たせる */
     el.classList.toggle("err", !syncing && syncConfigured() && localStorage.getItem(DIRTY_KEY) === "1");
   }
   syncFixedOffset();
+}
+
+function setSettingsMsg(text) {
   const m = document.getElementById("settings-msg");
-  const ov = document.getElementById("settings-overlay");
-  if (m && ov && !ov.classList.contains("hidden")) {
-    m.textContent = text;
-  }
+  if (m) m.textContent = text;
 }
 
 function scheduleSync() {
-  setSyncMsg(headerSyncLabel());
+  updateHeaderSync();
   if (!syncConfigured()) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => pushSync(false), 4000);
@@ -2190,16 +2264,15 @@ async function pullSync() {
 /* シートへ書き込み(送信) */
 async function pushSync(manual, useKeepalive) {
   if (!syncConfigured()) {
-    if (manual) setSyncMsg("先にURLと合言葉を保存してください");
     return;
   }
   if (!navigator.onLine) {
-    setSyncMsg("オフライン(接続後に自動同期します)");
+    updateHeaderSync();
     return;
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中");
+  updateHeaderSync();
   try {
     const body = JSON.stringify({
       token: localStorage.getItem(SYNC_TOKEN_KEY) || "",
@@ -2220,50 +2293,43 @@ async function pushSync(manual, useKeepalive) {
     if (data && data.ok) {
       localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
       localStorage.setItem(DIRTY_KEY, "0");
-      setSyncMsg(headerSyncLabel());
-    } else {
-      setSyncMsg(`同期エラー: ${(data && data.error) || "不明"}`);
     }
   } catch (e) {
     syncing = false;
-    setSyncMsg("同期に失敗しました(URLと通信環境を確認)");
   }
-  syncFixedOffset();
+  updateHeaderSync();
 }
 
 /* 取得→必要なら送信(起動時・復帰時・手動) */
 async function fullSync(manual) {
   if (!syncConfigured()) {
-    if (manual) setSyncMsg("先にURLと合言葉を保存してください");
     return;
   }
   if (!navigator.onLine) {
-    setSyncMsg("オフライン(接続後に自動同期します)");
+    updateHeaderSync();
     return;
   }
   if (syncing) return;
   syncing = true;
-  setSyncMsg("同期中");
+  updateHeaderSync();
   let pulled = false;
   try {
     pulled = await pullSync();
   } catch (e) {
     syncing = false;
-    setSyncMsg("シートからの取得に失敗しました");
-    syncFixedOffset();
+    updateHeaderSync();
     return;
   }
   syncing = false;
-  syncFixedOffset();
+  updateHeaderSync();
   if (pulled) {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-    setSyncMsg(headerSyncLabel());
   }
   if (localStorage.getItem(DIRTY_KEY) === "1") {
     await pushSync(manual);
   } else {
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-    setSyncMsg(headerSyncLabel());
+    updateHeaderSync();
   }
 }
 
@@ -2271,7 +2337,7 @@ window.addEventListener("online", () => fullSync(false));
 
 /* ---------- 最新版に更新 ---------- */
 async function forceUpdate() {
-  setSyncMsg("更新を確認中…");
+  setSettingsMsg("更新を確認中…");
   try {
     if ("serviceWorker" in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations();
@@ -2279,8 +2345,10 @@ async function forceUpdate() {
     }
     const keys = await caches.keys();
     await Promise.all(keys.map((k) => caches.delete(k)));
-  } catch (e) {}
-  location.reload();
+    setSettingsMsg("更新しました。反映するには「閉じる」の後、アプリを開き直してください");
+  } catch (e) {
+    setSettingsMsg("更新に失敗しました。通信環境を確認してもう一度お試しください");
+  }
 }
 
 /* ---------- ミニタイマー(タイマーが見えないときの上部バナー) ---------- */
@@ -2571,7 +2639,7 @@ document.addEventListener("click", (e) => {
     document.getElementById("settings-msg").textContent = url
       ? "保存しました。「今すぐ同期」で動作を確認できます"
       : "同期設定を削除しました";
-    setSyncMsg(headerSyncLabel());
+    updateHeaderSync();
   } else if (action === "sync-now") fullSync(true);
   else if (action === "force-update") forceUpdate();
 });
@@ -2636,7 +2704,7 @@ document.body.dataset.view = "today";
 renderAll();
 const verEl = document.getElementById("app-version");
 if (verEl) verEl.textContent = APP_VERSION;
-setSyncMsg(headerSyncLabel());
+updateHeaderSync();
 fullSync(false);
 setInterval(tick, 1000);
 

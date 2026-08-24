@@ -158,6 +158,8 @@ body.overrun { background: var(--alert-soft); }
 .t-item.done .t-card { opacity: .55; }
 
 /* ---------- 今日タブ:カードの長押しドラッグで時刻変更 ---------- */
+/* タッチでの長押し→ドラッグをブラウザの縦スクロールに奪われないようにする */
+.t-item[data-draggable="1"] .t-card { touch-action: none; }
 .t-item.tl-dragging {
   transition: none;
   z-index: 5;
