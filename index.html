@@ -20,7 +20,17 @@
       <div class="stats" id="stats"></div>
       <div class="sync-status" id="sync-status" data-action="settings-open">未同期</div>
     </div>
-    <button id="mini-timer" class="hidden" data-action="mini-jump"></button>
+    <div id="mini-timer" class="hidden" data-action="mini-jump">
+      <button id="mt-warn" class="hidden" data-action="mt-warn-tap">⚠</button>
+      <span id="mt-text"></span>
+      <button id="mt-toggle" data-action="mt-toggle">再開</button>
+    </div>
+  </div>
+  <div id="overrun-popup" class="hidden">
+    <div class="overrun-popup-inner">
+      <div class="overrun-popup-title">⚠ 見積時間を超過しています</div>
+      <div class="overrun-popup-body">切り上げて次の短いタスクに移ることを検討しましょう。続ける場合はこのままで構いません。</div>
+    </div>
   </div>
   <div class="wrap">
 
@@ -66,8 +76,7 @@
         <button class="sbtn" data-action="d-today">今日へ</button>
         <button class="sbtn muted" data-action="d-next">翌日 ▶</button>
       </div>
-      <section id="hero"></section>
-      <div class="plan-head">
+      <div class="plan-head" id="timeline-head">
         <h2 class="section-label" id="timeline-label">タイムライン</h2>
         <button class="sbtn muted" data-action="timeline-auto-adjust" id="timeline-adjust-btn">自動調整</button>
       </div>

@@ -58,43 +58,6 @@ body.overrun { background: var(--alert-soft); }
 .date { font-size: 22px; font-weight: 700; }
 .stats { display: flex; gap: 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 
-/* ---------- 秘書カード ---------- */
-.hero {
-  background: var(--surface);
-  border-radius: 18px;
-  padding: 18px 18px 16px;
-  box-shadow: 0 6px 24px rgba(23,33,43,.10);
-  margin-bottom: 22px;
-  transition: background .6s, color .6s;
-}
-.hero.overrun { background: var(--alert); color: #fff; }
-.hero-eyebrow { font-size: 12px; letter-spacing: .12em; opacity: .75; margin-bottom: 6px; }
-.hero-title { font-size: 20px; font-weight: 700; line-height: 1.35; }
-.hero-meta { font-size: 13px; margin-top: 4px; opacity: .8; }
-
-.timer-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 14px; }
-.timer-digits { font-family: var(--mono); font-size: 44px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
-.timer-est { font-size: 13px; opacity: .75; padding-bottom: 6px; }
-
-.bar { height: 8px; border-radius: 4px; background: var(--line); margin-top: 10px; overflow: hidden; }
-.hero.overrun .bar { background: rgba(255,255,255,.3); }
-.bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
-.hero.overrun .bar-fill { background: #fff; }
-
-.overrun-note { font-size: 12px; margin-top: 12px; opacity: .9; }
-
-.empty-card {
-  background: var(--surface);
-  border-radius: 18px;
-  padding: 24px;
-  text-align: center;
-  color: var(--muted);
-  margin-bottom: 22px;
-  font-size: 14px;
-  line-height: 1.8;
-}
-.empty-card small { font-size: 12px; }
-
 /* ---------- ボタン ---------- */
 .btn-row { display: flex; gap: 10px; margin-top: 16px; }
 .btn {
@@ -110,8 +73,6 @@ body.overrun { background: var(--alert-soft); }
   cursor: pointer;
 }
 .btn.solid { background: var(--accent); color: #fff; border-color: var(--accent); }
-.hero.overrun .btn { color: #fff; border-color: rgba(255,255,255,.7); }
-.hero.overrun .btn.solid { background: #fff; color: var(--alert); border-color: #fff; }
 
 /* ---------- タイムライン ---------- */
 .section-label { font-size: 13px; color: var(--muted); letter-spacing: .1em; margin: 0 0 10px 2px; font-weight: 600; }
@@ -123,6 +84,17 @@ body.overrun { background: var(--alert-soft); }
   left: 56px; top: 0; bottom: 0;
   width: 2px;
   background: var(--line);
+}
+/* 現在時刻の横線。カードの不透明な背景の下に隠れるよう、常に一番背後(最初の子要素)に置く */
+#tl-now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: .55;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .t-item { position: relative; margin-bottom: 12px; transition: transform .15s ease; }
@@ -166,11 +138,19 @@ body.overrun { background: var(--alert-soft); }
 .t-item.tl-dragging .t-card {
   box-shadow: 0 10px 26px rgba(23,33,43,.28);
 }
+/* ドラッグ中、抜けたカードの分だけ高さを保持して後続要素がずれないようにする */
+.tl-placeholder { margin: 0; }
 
 .t-main { min-width: 0; }
-.t-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.t-item.done .t-title { text-decoration: line-through; }
+/* カード3段構成: 1段目パンくず/2段目タスク名/3段目見積 */
+.t-crumb { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.t-name { font-size: 14.5px; font-weight: 600; line-height: 1.35; }
+.t-item.done .t-name { text-decoration: line-through; }
+.t-est { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 .t-sub { font-size: 11.5px; color: var(--muted); }
+.t-card[data-action] { cursor: pointer; }
+.t-card[data-action]:active { filter: brightness(0.97); }
+.t-edit { display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
 
 .t-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .sbtn {
@@ -297,6 +277,14 @@ body[data-view="plan"] .wrap { max-width: 760px; }
   margin-bottom: 8px;
 }
 .plan-head .section-label { margin: 0 0 0 2px; }
+/* タイムラインの見出し+自動調整ボタンは、スクロールしてもタイマーバナーの下に固定表示する */
+#timeline-head {
+  position: sticky;
+  top: var(--fixed-h, 0px);
+  background: var(--bg);
+  z-index: 10;
+  padding: 6px 0;
+}
 
 .g-row, .p-row {
   background: var(--surface);
@@ -881,7 +869,9 @@ input[type="date"], input[type="time"] {
   padding-top: calc(8px + env(safe-area-inset-top));
 }
 #mini-timer {
-  border: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--accent);
   color: #fff;
   font-size: 12.5px;
@@ -889,13 +879,61 @@ input[type="date"], input[type="time"] {
   font-family: inherit;
   padding: 8px 12px;
   cursor: pointer;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 #mini-timer.over { background: var(--alert); }
+#mt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#mt-warn {
+  border: none;
+  background: rgba(255,255,255,.25);
+  color: #fff;
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+#mt-toggle {
+  border: 1.5px solid rgba(255,255,255,.7);
+  background: transparent;
+  color: #fff;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* 超過警告のポップアップ:タイマーバナーの下に少し隙間をあけて表示 */
+#overrun-popup {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--fixed-h, 0px);
+  margin-top: 8px;
+  z-index: 65;
+  padding: 0 14px;
+}
+.overrun-popup-inner {
+  max-width: 430px;
+  margin: 0 auto;
+  background: var(--alert);
+  color: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 20px rgba(23,33,43,.28);
+}
+.overrun-popup-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.overrun-popup-body { font-size: 12.5px; line-height: 1.6; opacity: .95; }
 
 /* 並べ替え:掴んだカードと挿入ライン */
 .p-row, .issue-card { transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; }
@@ -922,10 +960,6 @@ input[type="date"], input[type="time"] {
 
 /* ---------- フェーズ9:日付ナビ・締め・パンくず・追随ドラッグ ---------- */
 #name-tip { position: absolute; }
-
-.hero-crumb { font-size: 11.5px; opacity: .7; margin: 2px 0 1px; }
-.crumb { color: var(--muted); font-weight: 500; }
-.t-title .crumb { font-size: 12px; }
 
 .g-hcell2.locked { background: #E3E6EA; color: #9AA4AE; }
 .g-lock-col {

@@ -11,7 +11,13 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v37"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v38"; // sw.jsのCACHE版数と揃えて更新すること
+
+/* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
+const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M13.4 3.4a1.5 1.5 0 0 1 2.12 0l1.08 1.08a1.5 1.5 0 0 1 0 2.12L7.5 15.7l-4 1 1-4L13.4 3.4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M11.8 5 15 8.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+</svg>`;
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -187,8 +193,6 @@ const dayList = (dk) =>
   state.assignments
     .filter((a) => a.date === dk)
     .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
-
-const todays = () => dayList(viewDate);
 
 /* 日跨ぎで継続中の作業も拾うため、全日付から検索(前日の作業とみなす) */
 const runningAsg = () => state.assignments.find((a) => a.status === "doing") || null;
@@ -597,70 +601,20 @@ function renderHeader() {
 }
 
 /* ---------- 描画:今日 ---------- */
-function renderHero() {
-  const hero = document.getElementById("hero");
-  const tk = todayKey();
-  if (viewDate !== tk) {
-    const closed = isClosed(viewDate);
-    const msg = viewDate > tk
-      ? "🔒 未来の日付は閲覧のみです。<br><small>割り当ての変更は計画タブで行えます</small>"
-      : closed
-        ? "🔒 この日は締め済みです。<br><small>編集するには下の「締めを解除」を押してください</small>"
-        : "過去の日付です。<br><small>締め前のため、完了の修正やタスク追加ができます</small>";
-    hero.innerHTML = `<div class="empty-card">${msg}</div>`;
-    document.body.classList.remove("overrun");
-    return;
-  }
-  const cur = currentAsg();
-  if (!cur) {
-    const has = todays().length > 0;
-    hero.innerHTML = `<div class="empty-card">${
-      has
-        ? "今日のタスクはすべて完了しました 🎉<br><small>おつかれさまでした</small>"
-        : "今日のタスクはまだありません。<br><small>「+ タスクを追加」か、計画で日付マスをタップして割り当てましょう</small>"
-    }</div>`;
-    document.body.classList.remove("overrun");
-    return;
-  }
-  const run = runningAsg();
-  const mine = run && run.id === cur.id;
-  const over = mine && isOver(cur);
-  document.body.classList.toggle("overrun", !!over);
-
-  const crumb = cur.taskId ? crumbOf(cur.taskId) : "";
-  const t = cur.taskId ? taskById(cur.taskId) : null;
-  const notes = t && t.notes ? t.notes : "";
-  const full = (crumb ? `${crumb} › ${asgTitle(cur)}` : asgTitle(cur)) + (notes ? `\n📝 ${notes}` : "");
-  const eyebrow = over ? "⚠ 見積時間を超過しています" : mine ? "作業中" : "次にやること";
-  const buttons = mine
-    ? `<button class="btn solid" data-action="finish" data-id="${cur.id}">完了にする</button>
-       <button class="btn" data-action="pause" data-id="${cur.id}">中断</button>`
-    : `<button class="btn solid" data-action="start" data-id="${cur.id}">作業を開始</button>`;
-
-  hero.innerHTML = `
-    <div class="hero ${over ? "overrun" : ""}" data-action="g-showname" data-name="${esc(full)}">
-      <div class="hero-eyebrow">${eyebrow}</div>
-      ${crumb ? `<div class="hero-crumb">${esc(crumb)} ›</div>` : ""}
-      <div class="hero-title">${esc(asgTitle(cur))}</div>
-      <div class="hero-meta">${cur.start} 開始予定 ・ 見積 ${cur.estimateMin}分</div>
-      <div class="timer-row">
-        <div class="timer-digits" id="timer-digits">${fmtDur(elapsedSec(cur))}</div>
-        <div class="timer-est">/ ${cur.estimateMin}:00</div>
-      </div>
-      <div class="bar"><div class="bar-fill" id="timer-bar"></div></div>
-      <div class="btn-row">${buttons}</div>
-      ${over ? `<div class="overrun-note">切り上げて次の短いタスクに移ることを検討しましょう。続ける場合はこのままで構いません。</div>` : ""}
-    </div>`;
-  updateTimerVisuals(cur);
-}
 
 /* タイムラインの自動調整:開始時刻が重複するカードを見積時間ぶんずらす。
    ずらした結果が次の(重複していない)カードの開始時刻以降になってしまう場合は、
    衝突が起きる直前のカードと同じ開始時刻に戻す。以降のカードも、その「直前のカード」を
    基準にした計算が衝突し続ける限り、間に何枚あっても同じ開始時刻のままになる
    (仮想の自動予定は対象外) */
+/* 完了済みで、かつ未来の時刻に置かれているカードは所要時間0分として扱う
+   (自動調整の空き時間計算で他のカードを不必要にブロックしないように) */
+const autoAdjustEstimate = (a, now) =>
+  a.status === "done" && hmToMin(a.start) > now ? 0 : a.estimateMin || 0;
+
 function autoAdjustTimeline() {
   if (!execEditable(viewDate)) return;
+  const now = nowMin();
   const items = state.assignments
     .filter((a) => a.date === viewDate)
     .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
@@ -674,7 +628,7 @@ function autoAdjustTimeline() {
       while (j < items.length && origStart[j] === origStart[i]) j++;
       const nextBoundary = j < items.length ? origStart[j] : Infinity;
       let refStart = adjStart[i];
-      let refEst = items[i].estimateMin || 0;
+      let refEst = autoAdjustEstimate(items[i], now);
       for (let k = i + 1; k < j; k++) {
         const candidate = refStart + refEst;
         if (candidate >= nextBoundary) {
@@ -682,7 +636,7 @@ function autoAdjustTimeline() {
         } else {
           adjStart[k] = candidate;
           refStart = candidate;
-          refEst = items[k].estimateMin || 0;
+          refEst = autoAdjustEstimate(items[k], now);
         }
       }
       i = j;
@@ -695,7 +649,7 @@ function autoAdjustTimeline() {
       }
     });
   }
-  if (autoAdjustPastCards()) changed = true;
+  if (autoAdjustPastCards(now)) changed = true;
   if (changed) {
     save();
     renderAll();
@@ -707,7 +661,7 @@ function autoAdjustTimeline() {
    2. 空き時間を先頭(現在時刻)から探し、他のカード(緑のカード・未来のカード・完了済み
       カード・既に移動した過去のカード)と重ならない最初の隙間に入れる
    3. 隙間が無ければ最後のカードの後ろに置く(検索ループが自然にそこへ辿り着く) */
-function autoAdjustPastCards() {
+function autoAdjustPastCards(now) {
   const cur = currentAsg();
   if (!cur) return false; // 今日タブ以外、または現在該当するカードが無い時は対象外
   const list = dayList(todayKey());
@@ -719,10 +673,9 @@ function autoAdjustPastCards() {
   const pastIds = new Set(pastCards.map((a) => a.id));
   const occupied = list
     .filter((a) => !pastIds.has(a.id))
-    .map((a) => ({ start: hmToMin(a.start), end: hmToMin(a.start) + (a.estimateMin || 0) }))
+    .map((a) => ({ start: hmToMin(a.start), end: hmToMin(a.start) + autoAdjustEstimate(a, now) }))
     .sort((x, y) => x.start - y.start);
 
-  const now = nowMin();
   let changed = false;
   pastCards.forEach((a) => {
     const est = a.estimateMin || 0;
@@ -758,19 +711,15 @@ function renderTimeline() {
       const active = !a.virtual && cur && cur.id === a.id;
       /* 現在時刻(緑=active)を優先し、それ以外で他のカードと理論上重なるものだけ薄い赤にする */
       const conflict = !active && list.some((b, j) => j !== idx && timeOverlap(a, b));
-      const past = viewDate === todayKey() && !done && hmToMin(a.start) + a.estimateMin < nowMin();
-      const spent = !a.virtual && a.spentSec > 5 ? ` ・ 実績 ${fmtDur(elapsedSec(a))}` : "";
-      const t = a.taskId ? taskById(a.taskId) : null;
-      const rec = a.virtual ? " ・ 🔁 自動" : t && t.type === "recurring" ? " ・ 🔁" : "";
       const crumb = a.taskId ? crumbOf(a.taskId) : "";
-      const notes = t && t.notes ? t.notes : "";
-      const full = (crumb ? `${crumb} › ${asgTitle(a)}` : asgTitle(a)) + (notes ? `\n📝 ${notes}` : "");
       const showTime = idx === 0 || list[idx - 1].start !== a.start;
+      const startable = !a.virtual && editable && !done;
+      const tapStart = startable ? ` data-action="start" data-id="${a.id}"` : "";
       const actions = a.virtual || !editable
         ? `<span class="virtual-tag">${a.virtual ? "🔁" : "🔒"}</span>`
         : done
           ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
-          : `${active ? "" : `<button class="sbtn" data-action="start" data-id="${a.id}">開始</button>`}
+          : `<button class="sbtn muted t-edit" data-action="asg-edit-task" data-id="${a.taskId || ""}" aria-label="編集">${PENCIL_ICON}</button>
              <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""} ${conflict ? "conflict" : ""}"
@@ -779,10 +728,11 @@ function renderTimeline() {
              data-start="${a.start}" data-est="${a.estimateMin}">
           <div class="t-time">${showTime ? a.start : ""}</div>
           <div class="t-dot"></div>
-          <div class="t-card">
+          <div class="t-card"${tapStart}>
             <div class="t-main">
-              <div class="t-title" data-action="g-showname" data-name="${esc(full)}">${crumb ? `<span class="crumb">${esc(crumb)} › </span>` : ""}${esc(asgTitle(a))}</div>
-              <div class="t-sub">見積 ${a.estimateMin}分${spent}${rec}${notes ? " ・ 📝" : ""}${past ? " ・ 予定時刻を過ぎています" : ""}</div>
+              ${crumb ? `<div class="t-crumb">${esc(crumb)} ›</div>` : ""}
+              <div class="t-name">${esc(asgTitle(a))}</div>
+              <div class="t-est">見積 ${a.estimateMin}分</div>
             </div>
             <div class="t-actions">${actions}</div>
           </div>
@@ -790,6 +740,48 @@ function renderTimeline() {
     })
     .join("");
   renderDayClose();
+  requestAnimationFrame(updateNowLine); // 描画確定後でないと位置が測れない
+}
+
+/* 現在時刻を示す横線を#timeline内に描く。カードや時刻グラフの背後(z-index低)に表示し、
+   実施中カードの中では見積に対する経過割合で補間、カード間では直前カードの下端に置く */
+function updateNowLine() {
+  const box = document.getElementById("timeline");
+  if (!box) return;
+  let line = document.getElementById("tl-now-line");
+  if (viewDate !== todayKey()) {
+    if (line) line.style.display = "none";
+    return;
+  }
+  const items = [...box.querySelectorAll(".t-item")];
+  if (!items.length) {
+    if (line) line.style.display = "none";
+    return;
+  }
+  if (!line) {
+    line = document.createElement("div");
+    line.id = "tl-now-line";
+    box.insertBefore(line, box.firstChild); // 常に最初の子要素にして背後に来るようにする
+  }
+  const now = nowMin();
+  const boxRect = box.getBoundingClientRect();
+  let top = 0;
+  for (const el of items) {
+    const start = hmToMin(el.dataset.start);
+    const est = Number(el.dataset.est) || 0;
+    const r = el.getBoundingClientRect();
+    const relTop = r.top - boxRect.top;
+    const relBottom = r.bottom - boxRect.top;
+    if (now < start) { top = relTop; break; }
+    if (now < start + est) {
+      const ratio = est > 0 ? (now - start) / est : 0;
+      top = relTop + (relBottom - relTop) * ratio;
+      break;
+    }
+    top = relBottom;
+  }
+  line.style.top = `${top}px`;
+  line.style.display = "";
 }
 
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
@@ -871,27 +863,46 @@ function tlStartDrag(item, clientY) {
     item.dataset.asg = asgId;
     item.dataset.virtual = "0";
   }
+  const allItemsRaw = [...document.querySelectorAll("#timeline .t-item")];
+  /* 直前の操作のCSSトランジションが完了しきっていないまま次のドラッグを始めると、
+     位置の測定がずれてカードが上のカードに重なる不具合があったため、
+     測定前に必ずトランジション/transformを確定させておく */
+  allItemsRaw.forEach((el) => {
+    el.style.transition = "none";
+    el.style.transform = "";
+  });
+  void document.getElementById("timeline").offsetHeight; // 上記を確実に反映させる
+
   const rect = item.getBoundingClientRect();
   const style = getComputedStyle(item);
-  const allItems = [...document.querySelectorAll("#timeline .t-item")];
-  const originalIndex = allItems.indexOf(item); // othersの中で「元々何個前にあったか」と同じ数
+  const originalIndex = allItemsRaw.indexOf(item); // othersの中で「元々何個前にあったか」と同じ数
+  const height = rect.height + (parseFloat(style.marginBottom) || 0);
   tlDrag = {
     el: item,
     id: asgId,
     estimateMin: Number(item.dataset.est) || 0,
-    height: rect.height + (parseFloat(style.marginBottom) || 0),
+    height,
     py: clientY,
     curY: clientY,
     scrollStart: window.scrollY,
-    others: allItems
+    others: allItemsRaw
       .filter((el) => el !== item)
       .map((el) => {
         const r = el.getBoundingClientRect();
         return { el, start: hmToMin(el.dataset.start), estimateMin: Number(el.dataset.est) || 0, midY: r.top + r.height / 2 };
       }),
     gapIndex: 0,
+    placeholder: null,
   };
-  /* 元の位置に余白(隙間)が残らないよう、ドラッグ中は文書の流れから外す */
+  /* 元の位置に余白(隙間)が残らないよう、ドラッグ中は文書の流れから外す。
+     その分レイアウトの高さが縮んで後ろの要素(締めボタン等)がずれ上がってしまうため、
+     同じ高さのプレースホルダーを代わりに挿入して高さを維持する */
+  const placeholder = document.createElement("div");
+  placeholder.className = "tl-placeholder";
+  placeholder.style.height = `${height}px`;
+  item.parentNode.insertBefore(placeholder, item);
+  tlDrag.placeholder = placeholder;
+
   item.style.position = "fixed";
   item.style.left = `${rect.left}px`;
   item.style.top = `${rect.top}px`;
@@ -899,10 +910,7 @@ function tlStartDrag(item, clientY) {
   item.style.margin = "0";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
-  /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする。
-     .t-itemのCSSトランジションが「動いていないはずのtransform適用」まで
-     アニメーションしてしまうため、最初の1回だけ一時的にトランジションを止める */
-  tlDrag.others.forEach((o) => { o.el.style.transition = "none"; });
+  /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする */
   tlApplyGap(originalIndex);
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -953,6 +961,7 @@ document.addEventListener("pointerup", () => {
   d.el.style.width = "";
   d.el.style.margin = "";
   d.el.style.transform = "";
+  if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
   d.others.forEach((o) => { o.el.style.transform = ""; });
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
@@ -1960,22 +1969,12 @@ function renderAll() {
     renderedCurrentId = cur ? cur.id : null;
     const run = runningAsg();
     renderedOverrun = !!(run && isOver(run));
-    renderHero();
     renderTimeline();
   } else if (view === "gantt") {
     renderGantt();
   } else {
     renderPlan();
   }
-}
-
-function updateTimerVisuals(cur) {
-  const digits = document.getElementById("timer-digits");
-  const bar = document.getElementById("timer-bar");
-  if (!cur || !digits || !bar) return;
-  const el = elapsedSec(cur);
-  digits.textContent = fmtDur(el);
-  bar.style.width = `${Math.min(100, (el / (cur.estimateMin * 60)) * 100)}%`;
 }
 
 /* ---------- 課題フォーム ---------- */
@@ -2426,24 +2425,32 @@ async function forceUpdate() {
 }
 
 /* ---------- ミニタイマー(タイマーが見えないときの上部バナー) ---------- */
+/* コンパクトなタイマーバナー(旧ヒーローカードを統合)。作業中は常にどのタブでも表示し、
+   未着手の「次にやること」は今日タブを見ている時だけ表示する */
 function updateMiniTimer() {
   const bar = document.getElementById("mini-timer");
-  if (!bar) return;
+  const warnBtn = document.getElementById("mt-warn");
+  const textEl = document.getElementById("mt-text");
+  const toggleBtn = document.getElementById("mt-toggle");
+  if (!bar || !warnBtn || !textEl || !toggleBtn) return;
   const run = runningAsg();
-  let show = false;
-  if (run) {
-    if (view !== "today" || viewDate !== todayKey()) {
-      show = true;
-    } else {
-      const hero = document.getElementById("hero");
-      const r = hero ? hero.getBoundingClientRect() : null;
-      show = r ? r.bottom < 70 : true;
-    }
-  }
+  const onTodayView = view === "today" && viewDate === todayKey();
+  const cur = run || (onTodayView ? currentAsg() : null);
+  const mine = !!(run && cur && run.id === cur.id);
+  const over = mine && isOver(cur);
+  const show = !!cur;
+
+  document.body.classList.toggle("overrun", !!over);
   if (show) {
-    const over = isOver(run);
     bar.classList.toggle("over", over);
-    bar.textContent = `${over ? "⚠" : "▶"} ${asgTitle(run)} — ${fmtDur(elapsedSec(run))} / ${run.estimateMin}:00`;
+    warnBtn.classList.toggle("hidden", !over);
+    textEl.textContent = mine
+      ? `作業中: ${asgTitle(cur)} — ${fmtDur(elapsedSec(cur))} / ${cur.estimateMin}:00`
+      : `次にやること: ${asgTitle(cur)}`;
+    toggleBtn.textContent = mine ? "停止" : "再開";
+    toggleBtn.dataset.id = cur.id;
+  } else {
+    document.getElementById("overrun-popup").classList.add("hidden");
   }
   const wasHidden = bar.classList.contains("hidden");
   bar.classList.toggle("hidden", !show);
@@ -2468,7 +2475,7 @@ function tick() {
   if (curId !== renderedCurrentId || over !== renderedOverrun) {
     renderAll();
   } else {
-    updateTimerVisuals(cur);
+    updateNowLine();
   }
 }
 
@@ -2484,6 +2491,7 @@ document.addEventListener("click", (e) => {
   else if (action === "finish") finishAsg(id);
   else if (action === "reopen") reopenAsg(id);
   else if (action === "remove") removeAsg(id);
+  else if (action === "asg-edit-task") { if (id) openTaskForm(taskById(id), null); }
   else if (action === "add-open") {
     document.getElementById("add-form").classList.remove("hidden");
     document.getElementById("fab").classList.add("hidden");
@@ -2522,7 +2530,19 @@ document.addEventListener("click", (e) => {
   else if (action === "mini-jump") {
     viewDate = todayKey();
     switchView("today");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const run = runningAsg();
+    const cur = run || currentAsg();
+    const el = cur ? document.querySelector(`.t-item[data-asg="${cur.id}"]`) : null;
+    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    else window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  else if (action === "mt-toggle") {
+    const running = runningAsg();
+    if (running && running.id === id) pauseAsg(id);
+    else if (id) startAsg(id);
+  }
+  else if (action === "mt-warn-tap") {
+    document.getElementById("overrun-popup").classList.remove("hidden");
   }
   else if (action === "d-prev") { viewDate = addDays(viewDate, -1); renderAll(); }
   else if (action === "d-next") { viewDate = addDays(viewDate, 1); renderAll(); }
@@ -2752,6 +2772,14 @@ document.addEventListener("change", (e) => {
       document.getElementById("a-est").value = t.estimateMin || 25;
     }
   }
+});
+
+/* 超過警告ポップアップは画面のどこを押しても閉じる(警告マーク自身のタップで開いた瞬間は除く) */
+document.addEventListener("click", (e) => {
+  const popup = document.getElementById("overrun-popup");
+  if (!popup || popup.classList.contains("hidden")) return;
+  if (e.target.closest("#mt-warn")) return;
+  popup.classList.add("hidden");
 });
 
 document.addEventListener("visibilitychange", async () => {
