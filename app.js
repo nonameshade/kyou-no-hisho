@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v43"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v44"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -962,6 +962,10 @@ document.addEventListener("pointermove", (e) => {
      長押しが確定する前にスクロール意図(8px以上の移動)と判断した場合は、
      指の移動量ぶんをこちらで代わりにスクロールする */
   if (tlScrollFallback) {
+    /* touch-action:noneでブロックされているぶん、ここで代行スクロールする。
+       preventDefaultも合わせて呼ばないと、端末によっては裏でネイティブの
+       スクロールも同時に走り指の動き以上に画面が動いてしまうことがある */
+    e.preventDefault();
     const dy = tlScrollLastY - e.clientY;
     if (dy) window.scrollBy(0, dy);
     tlScrollLastY = e.clientY;
@@ -973,6 +977,9 @@ document.addEventListener("pointermove", (e) => {
       tlPending = null;
       tlScrollFallback = true;
       tlScrollLastY = e.clientY;
+      /* マウスでのドラッグ(スワイプ)はブラウザ側で移動量に関わらずclickが
+         発火してしまい、タイマー開始/停止が誤爆するため抑制する */
+      suppressClick = true;
     }
     return;
   }
@@ -986,7 +993,10 @@ document.addEventListener("pointermove", (e) => {
 document.addEventListener("pointerup", () => {
   clearTimeout(tlLongPressTimer);
   tlPending = null;
-  tlScrollFallback = false;
+  if (tlScrollFallback) {
+    tlScrollFallback = false;
+    setTimeout(() => { suppressClick = false; }, 80);
+  }
   if (!tlDrag) return;
   const d = tlDrag;
   tlDrag = null;
@@ -2571,8 +2581,8 @@ document.addEventListener("click", (e) => {
   const { action, id } = btn.dataset;
 
   /* 今日 */
-  if (action === "start") startAsg(id);
-  else if (action === "pause") pauseAsg(id);
+  if (action === "start") { if (!suppressClick) startAsg(id); }
+  else if (action === "pause") { if (!suppressClick) pauseAsg(id); }
   else if (action === "finish") finishAsg(id);
   else if (action === "reopen") reopenAsg(id);
   else if (action === "remove") removeAsg(id);
