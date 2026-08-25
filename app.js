@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v38"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v39"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -715,12 +715,12 @@ function renderTimeline() {
       const showTime = idx === 0 || list[idx - 1].start !== a.start;
       const startable = !a.virtual && editable && !done;
       const tapStart = startable ? ` data-action="start" data-id="${a.id}"` : "";
+      const editBtn = `<button class="sbtn muted t-edit" data-action="asg-edit-task" data-id="${a.taskId || ""}" aria-label="編集">${PENCIL_ICON}</button>`;
       const actions = a.virtual || !editable
         ? `<span class="virtual-tag">${a.virtual ? "🔁" : "🔒"}</span>`
         : done
-          ? `<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
-          : `<button class="sbtn muted t-edit" data-action="asg-edit-task" data-id="${a.taskId || ""}" aria-label="編集">${PENCIL_ICON}</button>
-             <button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
+          ? `${editBtn}<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
+          : `${editBtn}<button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""} ${conflict ? "conflict" : ""}"
              data-asg="${a.virtual ? "" : a.id}" data-virtual="${a.virtual ? "1" : "0"}" data-task="${a.taskId || ""}"
@@ -741,6 +741,17 @@ function renderTimeline() {
     .join("");
   renderDayClose();
   requestAnimationFrame(updateNowLine); // 描画確定後でないと位置が測れない
+}
+
+/* 固定ヘッダー(#fixedbars)とスティッキーのタイムライン見出しの高さぶんを差し引いて、
+   カードがそれらの直下に来る位置までスクロールする */
+function scrollToTimelineCard(el) {
+  const fixedH = document.getElementById("fixedbars").offsetHeight;
+  const head = document.getElementById("timeline-head");
+  const headH = head ? head.getBoundingClientRect().height : 0;
+  const rect = el.getBoundingClientRect();
+  const targetY = window.scrollY + rect.top - fixedH - headH - 8;
+  window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
 }
 
 /* 現在時刻を示す横線を#timeline内に描く。カードや時刻グラフの背後(z-index低)に表示し、
@@ -2533,7 +2544,7 @@ document.addEventListener("click", (e) => {
     const run = runningAsg();
     const cur = run || currentAsg();
     const el = cur ? document.querySelector(`.t-item[data-asg="${cur.id}"]`) : null;
-    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (el) requestAnimationFrame(() => scrollToTimelineCard(el));
     else window.scrollTo({ top: 0, behavior: "smooth" });
   }
   else if (action === "mt-toggle") {

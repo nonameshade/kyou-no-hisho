@@ -200,120 +200,121 @@
         <div id="task-tree"></div>
       </section>
 
-      <section id="task-form" class="add-form hidden">
-        <div class="form-title" id="task-form-title">タスクを追加</div>
-        <input type="text" id="t-title" placeholder="タスク名" maxlength="80">
-        <div class="form-row">
-          <label>親タスク
-            <select id="t-parent"></select>
-          </label>
-          <label>関連する課題
-            <select id="t-goal"></select>
-          </label>
-        </div>
-        <div class="form-row">
-          <label>種類
-            <select id="t-type">
-              <option value="single">1回限り</option>
-              <option value="irregular">不定期(繰り返し)</option>
-              <option value="recurring">周期的</option>
-              <option value="summary">サマリー(子タスクの見出し)</option>
-            </select>
-          </label>
-          <label>見積(分)
-            <input type="number" id="t-est" min="1" max="600" value="25">
-          </label>
-          <label>既定の開始時刻
-            <input type="time" id="t-defstart" value="09:00">
-          </label>
-        </div>
-
-        <div id="period-block" class="form-row">
-          <label>予定開始日(ガント用)
-            <input type="date" id="t-pstart">
-          </label>
-          <label>予定終了日
-            <input type="date" id="t-pend">
-          </label>
-        </div>
-
-        <div id="rec-block" class="hidden">
-          <label class="f-label">周期のパターン
-            <select id="t-rkind">
-              <option value="everyNDays">何日ごと</option>
-              <option value="weekly">毎週◯曜日</option>
-              <option value="monthly">毎月◯日</option>
-              <option value="yearly">毎年◯月◯日</option>
-            </select>
-          </label>
-          <div id="rec-ndays" class="form-row">
-            <label>間隔(日)
-              <input type="number" id="t-rn" min="1" max="365" value="3">
-            </label>
-            <label>起点日
-              <input type="date" id="t-anchor">
-            </label>
-          </div>
-          <div id="rec-weekly" class="weekday-row hidden">
-            <label><input type="checkbox" value="0">日</label>
-            <label><input type="checkbox" value="1">月</label>
-            <label><input type="checkbox" value="2">火</label>
-            <label><input type="checkbox" value="3">水</label>
-            <label><input type="checkbox" value="4">木</label>
-            <label><input type="checkbox" value="5">金</label>
-            <label><input type="checkbox" value="6">土</label>
-          </div>
-          <div id="rec-monthly" class="form-row hidden">
-            <label>毎月の日付
-              <input type="number" id="t-rday" min="1" max="31" value="1">
-            </label>
-          </div>
-          <div id="rec-yearly" class="form-row hidden">
-            <label>月
-              <input type="number" id="t-rmonth" min="1" max="12" value="1">
-            </label>
-            <label>日
-              <input type="number" id="t-rmday" min="1" max="31" value="1">
-            </label>
-          </div>
-          <label class="f-label">予備日(自動予定に対する控えの日)
-            <select id="t-rsmode">
-              <option value="">なし</option>
-              <option value="after">実施日の◯日後</option>
-              <option value="before">実施日の◯日前</option>
-              <option value="weekday">同じ週の◯曜日</option>
-            </select>
-          </label>
-          <div id="rs-n" class="form-row hidden">
-            <label>日数
-              <input type="number" id="t-rsn" min="1" max="30" value="1">
-            </label>
-          </div>
-          <div id="rs-wd" class="form-row hidden">
-            <label>曜日
-              <select id="t-rswd">
-                <option value="0">日</option><option value="1">月</option><option value="2">火</option>
-                <option value="3">水</option><option value="4">木</option><option value="5">金</option>
-                <option value="6">土</option>
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <label class="f-label">備考
-          <textarea id="t-notes" rows="3" placeholder="メモや注意点(今日タブのチップに表示されます)" maxlength="500"></textarea>
-        </label>
-
-        <div class="btn-row">
-          <button class="btn" data-action="task-cancel">やめる</button>
-          <button class="btn solid" data-action="task-save">保存する</button>
-        </div>
-        <div class="btn-row hidden" id="task-delete-row">
-          <button class="btn danger" data-action="task-delete">このタスクを削除</button>
-        </div>
-      </section>
-
     </div>
+
+    <!-- タスク編集フォーム: どのタブからでも(今日タブの鉛筆アイコン含め)開けるようタブの外に配置 -->
+    <section id="task-form" class="add-form hidden">
+      <div class="form-title" id="task-form-title">タスクを追加</div>
+      <input type="text" id="t-title" placeholder="タスク名" maxlength="80">
+      <div class="form-row">
+        <label>親タスク
+          <select id="t-parent"></select>
+        </label>
+        <label>関連する課題
+          <select id="t-goal"></select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>種類
+          <select id="t-type">
+            <option value="single">1回限り</option>
+            <option value="irregular">不定期(繰り返し)</option>
+            <option value="recurring">周期的</option>
+            <option value="summary">サマリー(子タスクの見出し)</option>
+          </select>
+        </label>
+        <label>見積(分)
+          <input type="number" id="t-est" min="1" max="600" value="25">
+        </label>
+        <label>既定の開始時刻
+          <input type="time" id="t-defstart" value="09:00">
+        </label>
+      </div>
+
+      <div id="period-block" class="form-row">
+        <label>予定開始日(ガント用)
+          <input type="date" id="t-pstart">
+        </label>
+        <label>予定終了日
+          <input type="date" id="t-pend">
+        </label>
+      </div>
+
+      <div id="rec-block" class="hidden">
+        <label class="f-label">周期のパターン
+          <select id="t-rkind">
+            <option value="everyNDays">何日ごと</option>
+            <option value="weekly">毎週◯曜日</option>
+            <option value="monthly">毎月◯日</option>
+            <option value="yearly">毎年◯月◯日</option>
+          </select>
+        </label>
+        <div id="rec-ndays" class="form-row">
+          <label>間隔(日)
+            <input type="number" id="t-rn" min="1" max="365" value="3">
+          </label>
+          <label>起点日
+            <input type="date" id="t-anchor">
+          </label>
+        </div>
+        <div id="rec-weekly" class="weekday-row hidden">
+          <label><input type="checkbox" value="0">日</label>
+          <label><input type="checkbox" value="1">月</label>
+          <label><input type="checkbox" value="2">火</label>
+          <label><input type="checkbox" value="3">水</label>
+          <label><input type="checkbox" value="4">木</label>
+          <label><input type="checkbox" value="5">金</label>
+          <label><input type="checkbox" value="6">土</label>
+        </div>
+        <div id="rec-monthly" class="form-row hidden">
+          <label>毎月の日付
+            <input type="number" id="t-rday" min="1" max="31" value="1">
+          </label>
+        </div>
+        <div id="rec-yearly" class="form-row hidden">
+          <label>月
+            <input type="number" id="t-rmonth" min="1" max="12" value="1">
+          </label>
+          <label>日
+            <input type="number" id="t-rmday" min="1" max="31" value="1">
+          </label>
+        </div>
+        <label class="f-label">予備日(自動予定に対する控えの日)
+          <select id="t-rsmode">
+            <option value="">なし</option>
+            <option value="after">実施日の◯日後</option>
+            <option value="before">実施日の◯日前</option>
+            <option value="weekday">同じ週の◯曜日</option>
+          </select>
+        </label>
+        <div id="rs-n" class="form-row hidden">
+          <label>日数
+            <input type="number" id="t-rsn" min="1" max="30" value="1">
+          </label>
+        </div>
+        <div id="rs-wd" class="form-row hidden">
+          <label>曜日
+            <select id="t-rswd">
+              <option value="0">日</option><option value="1">月</option><option value="2">火</option>
+              <option value="3">水</option><option value="4">木</option><option value="5">金</option>
+              <option value="6">土</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <label class="f-label">備考
+        <textarea id="t-notes" rows="3" placeholder="メモや注意点(今日タブのチップに表示されます)" maxlength="500"></textarea>
+      </label>
+
+      <div class="btn-row">
+        <button class="btn" data-action="task-cancel">やめる</button>
+        <button class="btn solid" data-action="task-save">保存する</button>
+      </div>
+      <div class="btn-row hidden" id="task-delete-row">
+        <button class="btn danger" data-action="task-delete">このタスクを削除</button>
+      </div>
+    </section>
 
     <section id="add-form" class="add-form hidden">
       <div class="form-title">タスク追加</div>

@@ -8,6 +8,7 @@
   --accent-soft: #E2F1ED;
   --alert: #D6453D;
   --alert-soft: #FBE9E7;
+  --overrun-bg: #FDF4F3; /* 見積超過時の背景色。カード重複表示(--alert-soft)より薄くして区別する */
   --done: #9AA4AE;
   --mono: "SF Mono", "Menlo", "Consolas", monospace;
 }
@@ -38,7 +39,10 @@ button:not(:disabled):active { filter: brightness(0.9); transform: scale(0.97); 
 #fab:not(:disabled):active { transform: translateX(-50%) scale(0.97); }
 button:disabled { opacity: .4; cursor: default; }
 
-body.overrun { background: var(--alert-soft); }
+body.overrun { background: var(--overrun-bg); }
+/* 見積超過中はヘッダー(固定バー・タイムライン見出し)も背景色に合わせる */
+body.overrun #fixed-stats,
+body.overrun #timeline-head { background: var(--overrun-bg); }
 
 .wrap {
   max-width: 430px;
@@ -129,8 +133,8 @@ body.overrun { background: var(--alert-soft); }
 .t-item.done .t-card { opacity: .55; }
 
 /* ---------- 今日タブ:カードの長押しドラッグで時刻変更 ---------- */
-/* タッチでの長押し→ドラッグをブラウザの縦スクロールに奪われないようにする */
-.t-item[data-draggable="1"] .t-card { touch-action: none; }
+/* touch-action:noneにすると縦スワイプでのスクロールができなくなるため付けない。
+   長押し中の移動量チェック(8px)で、スクロール意図の場合は自動でキャンセルされる */
 .t-item.tl-dragging {
   transition: none;
   z-index: 5;
