@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v39"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v41"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -74,6 +74,7 @@ let editingTaskId = null;
 let taskFormReturnAnchor = null; // キャンセル時に戻る行のid(編集なら本人、子タスク追加なら親)
 let editingIssueId = null;
 let editingAsgId = null;
+let editingAsgQuickId = null; // 今日タブの鉛筆アイコンから開く簡易編集(開始時刻・見積のみ)の対象id
 let selDate = todayKey();
 let viewDate = todayKey(); // 今日タブで表示中の日付
 let gStart = addDays(todayKey(), -7);
@@ -713,14 +714,14 @@ function renderTimeline() {
       const conflict = !active && list.some((b, j) => j !== idx && timeOverlap(a, b));
       const crumb = a.taskId ? crumbOf(a.taskId) : "";
       const showTime = idx === 0 || list[idx - 1].start !== a.start;
+      const running = a.status === "doing";
       const startable = !a.virtual && editable && !done;
-      const tapStart = startable ? ` data-action="start" data-id="${a.id}"` : "";
-      const editBtn = `<button class="sbtn muted t-edit" data-action="asg-edit-task" data-id="${a.taskId || ""}" aria-label="編集">${PENCIL_ICON}</button>`;
+      const tapStart = startable ? ` data-action="${running ? "pause" : "start"}" data-id="${a.id}"` : "";
+      const checkDisabled = a.virtual || !editable;
+      const checkbox = `<input type="checkbox" class="t-check" data-action="finish-toggle" data-id="${a.virtual ? "" : a.id}"${done ? " checked" : ""}${checkDisabled ? " disabled" : ""} aria-label="完了">`;
       const actions = a.virtual || !editable
         ? `<span class="virtual-tag">${a.virtual ? "🔁" : "🔒"}</span>`
-        : done
-          ? `${editBtn}<button class="sbtn" data-action="reopen" data-id="${a.id}">戻す</button>`
-          : `${editBtn}<button class="sbtn muted" data-action="finish" data-id="${a.id}">完了</button>`;
+        : `<button class="sbtn muted t-edit" data-action="asg-edit-open" data-id="${a.id}" aria-label="編集">${PENCIL_ICON}</button>`;
       return `
         <div class="t-item ${done ? "done" : ""} ${active ? "active" : ""} ${conflict ? "conflict" : ""}"
              data-asg="${a.virtual ? "" : a.id}" data-virtual="${a.virtual ? "1" : "0"}" data-task="${a.taskId || ""}"
@@ -729,10 +730,11 @@ function renderTimeline() {
           <div class="t-time">${showTime ? a.start : ""}</div>
           <div class="t-dot"></div>
           <div class="t-card"${tapStart}>
+            ${checkbox}
             <div class="t-main">
               ${crumb ? `<div class="t-crumb">${esc(crumb)} ›</div>` : ""}
               <div class="t-name">${esc(asgTitle(a))}</div>
-              <div class="t-est">見積 ${a.estimateMin}分</div>
+              <div class="t-est">${fmtDur(elapsedSec(a))} / ${fmtDur(a.estimateMin * 60)}</div>
             </div>
             <div class="t-actions">${actions}</div>
           </div>
@@ -740,7 +742,9 @@ function renderTimeline() {
     })
     .join("");
   renderDayClose();
-  requestAnimationFrame(updateNowLine); // 描画確定後でないと位置が測れない
+  /* 描画確定後でないと位置が測れない。端末によっては1回のrAFではレイアウトが
+     完全に落ち着く前に測ってしまい線がずれることがあるため2回分待つ */
+  requestAnimationFrame(() => requestAnimationFrame(updateNowLine));
 }
 
 /* 固定ヘッダー(#fixedbars)とスティッキーのタイムライン見出しの高さぶんを差し引いて、
@@ -919,6 +923,10 @@ function tlStartDrag(item, clientY) {
   item.style.top = `${rect.top}px`;
   item.style.width = `${rect.width}px`;
   item.style.margin = "0";
+  /* ドラッグが確定した今だけtouch-actionを止め、タッチ操作でページごと
+     スクロールされてしまう(持ち上げたカードでなく背景が動く)のを防ぐ。
+     長押し判定中は付けないことで、通常のスワイプスクロールは妨げない */
+  item.style.touchAction = "none";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
   /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする */
@@ -932,7 +940,7 @@ function tlStartDrag(item, clientY) {
 
 document.addEventListener("pointerdown", (e) => {
   const card = e.target.closest("#timeline .t-card");
-  if (!card || e.target.closest(".t-actions")) return;
+  if (!card || e.target.closest(".t-actions") || e.target.closest(".t-check")) return;
   const item = card.closest(".t-item");
   if (!item || item.dataset.draggable !== "1") return;
   clearTimeout(tlLongPressTimer);
@@ -972,6 +980,7 @@ document.addEventListener("pointerup", () => {
   d.el.style.width = "";
   d.el.style.margin = "";
   d.el.style.transform = "";
+  d.el.style.touchAction = "";
   if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
   d.others.forEach((o) => { o.el.style.transform = ""; });
   suppressClick = true;
@@ -997,6 +1006,16 @@ document.addEventListener("pointerup", () => {
   }
   save(); // 周期タスクの実体化だけが起きた場合も保存する
   renderAll();
+  /* 再描画でカードのDOM要素は作り直されるため、新しい要素にドロップの一時ハイライトを付ける */
+  if (d.id) {
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`.t-item[data-asg="${d.id}"]`);
+      if (el) {
+        el.classList.add("drop-flash");
+        setTimeout(() => el.classList.remove("drop-flash"), 1200);
+      }
+    });
+  }
 });
 
 /* ---------- 締め(日次ロック) ---------- */
@@ -2077,6 +2096,17 @@ function updateRecVisibility() {
   document.getElementById("rs-wd").classList.toggle("hidden", rs !== "weekday");
 }
 
+/* 今日タブの鉛筆アイコンから開く簡易編集。タスク自体ではなく、この日の割り当て
+   (開始時刻・見積)だけを編集する全画面フォーム */
+function openAsgEditForm(a) {
+  editingAsgQuickId = a.id;
+  document.getElementById("ae-start").value = a.start;
+  document.getElementById("ae-est").value = a.estimateMin;
+  document.getElementById("asg-edit-form").classList.remove("hidden");
+  syncFixedOffset();
+  lockBodyScroll();
+}
+
 function openTaskForm(task, parentId, presetIssueId) {
   editingTaskId = task ? task.id : null;
   taskFormReturnAnchor = task ? task.id : (parentId || null);
@@ -2234,6 +2264,25 @@ let syncTimer = null;
 let syncing = false;
 
 const syncConfigured = () => !!localStorage.getItem(SYNC_URL_KEY);
+
+/* 全画面フォームを開いている間、背後のページがスワイプでスクロールしないようにする */
+function lockBodyScroll() {
+  const y = window.scrollY;
+  document.body.dataset.scrollLockY = String(y);
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${y}px`;
+  document.body.style.left = "0";
+  document.body.style.right = "0";
+}
+function unlockBodyScroll() {
+  const y = Number(document.body.dataset.scrollLockY || 0);
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.left = "";
+  document.body.style.right = "";
+  delete document.body.dataset.scrollLockY;
+  window.scrollTo(0, y);
+}
 
 function syncFixedOffset() {
   const bars = document.getElementById("fixedbars");
@@ -2487,7 +2536,16 @@ function tick() {
     renderAll();
   } else {
     updateNowLine();
+    updateRunningCardTime();
   }
+}
+
+/* 実行中カードの経過/見積表示を、フル再描画なしで毎秒更新する */
+function updateRunningCardTime() {
+  const run = runningAsg();
+  if (!run) return;
+  const el = document.querySelector(`.t-item[data-asg="${run.id}"] .t-est`);
+  if (el) el.textContent = `${fmtDur(elapsedSec(run))} / ${fmtDur(run.estimateMin * 60)}`;
 }
 
 /* ---------- イベント ---------- */
@@ -2502,11 +2560,36 @@ document.addEventListener("click", (e) => {
   else if (action === "finish") finishAsg(id);
   else if (action === "reopen") reopenAsg(id);
   else if (action === "remove") removeAsg(id);
-  else if (action === "asg-edit-task") { if (id) openTaskForm(taskById(id), null); }
+  else if (action === "finish-toggle") {
+    const a = id ? state.assignments.find((x) => x.id === id) : null;
+    if (a) { if (a.status === "done") reopenAsg(id); else finishAsg(id); }
+  }
+  else if (action === "asg-edit-open") {
+    const a = id ? state.assignments.find((x) => x.id === id) : null;
+    if (a) openAsgEditForm(a);
+  }
+  else if (action === "asg-edit-cancel") {
+    editingAsgQuickId = null;
+    document.getElementById("asg-edit-form").classList.add("hidden");
+    unlockBodyScroll();
+  }
+  else if (action === "asg-edit-save") {
+    const a = editingAsgQuickId ? state.assignments.find((x) => x.id === editingAsgQuickId) : null;
+    if (a) {
+      a.start = document.getElementById("ae-start").value || a.start;
+      a.estimateMin = Math.max(1, Number(document.getElementById("ae-est").value) || a.estimateMin);
+      save();
+      renderAll();
+    }
+    editingAsgQuickId = null;
+    document.getElementById("asg-edit-form").classList.add("hidden");
+    unlockBodyScroll();
+  }
   else if (action === "add-open") {
     document.getElementById("add-form").classList.remove("hidden");
     document.getElementById("fab").classList.add("hidden");
     syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
+    lockBodyScroll();
     document.getElementById("f-start").value = nowHM();
     /* 今日タブで、閲覧中の日が編集可能な時だけ「今日に追加する」を選べる。それ以外はタスク登録のみ */
     const canToday = execEditable(viewDate);
@@ -2518,6 +2601,7 @@ document.addEventListener("click", (e) => {
   } else if (action === "add-cancel") {
     document.getElementById("add-form").classList.add("hidden");
     document.getElementById("fab").classList.remove("hidden");
+    unlockBodyScroll();
   } else if (action === "add-confirm") {
     const title = document.getElementById("f-title").value;
     if (!title.trim()) return;
@@ -2533,6 +2617,7 @@ document.addEventListener("click", (e) => {
     }
     document.getElementById("f-title").value = "";
     document.getElementById("add-form").classList.add("hidden");
+    unlockBodyScroll();
     document.getElementById("fab").classList.remove("hidden");
   }
 
@@ -2553,7 +2638,7 @@ document.addEventListener("click", (e) => {
     else if (id) startAsg(id);
   }
   else if (action === "mt-warn-tap") {
-    document.getElementById("overrun-popup").classList.remove("hidden");
+    document.getElementById("overrun-popup").classList.toggle("hidden");
   }
   else if (action === "d-prev") { viewDate = addDays(viewDate, -1); renderAll(); }
   else if (action === "d-next") { viewDate = addDays(viewDate, 1); renderAll(); }

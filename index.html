@@ -316,7 +316,7 @@
       </div>
     </section>
 
-    <section id="add-form" class="add-form hidden">
+    <section id="add-form" class="add-form form-fullscreen hidden">
       <div class="form-title">タスク追加</div>
       <input type="text" id="f-title" placeholder="タスク名" maxlength="80">
       <div class="form-row">
@@ -333,6 +333,23 @@
       <div class="btn-row">
         <button class="btn" data-action="add-cancel">キャンセル</button>
         <button class="btn solid" data-action="add-confirm">保存</button>
+      </div>
+    </section>
+
+    <!-- 今日タブの鉛筆アイコンからの編集: 割り当ての開始時刻・見積のみを編集する簡易フォーム -->
+    <section id="asg-edit-form" class="add-form form-fullscreen hidden">
+      <div class="form-title">タスクを編集</div>
+      <div class="form-row">
+        <label>開始時刻
+          <input type="time" id="ae-start">
+        </label>
+        <label>見積(分)
+          <input type="number" id="ae-est" min="1" max="600">
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn" data-action="asg-edit-cancel">キャンセル</button>
+        <button class="btn solid" data-action="asg-edit-save">保存</button>
       </div>
     </section>
 

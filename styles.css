@@ -144,8 +144,21 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
 }
 /* ドラッグ中、抜けたカードの分だけ高さを保持して後続要素がずれないようにする */
 .tl-placeholder { margin: 0; }
+/* ドロップ直後、どのカードが動いたか分かるよう枠線を一瞬強調する */
+.t-item.drop-flash .t-card { animation: tlDropFlash 1.2s ease; }
+@keyframes tlDropFlash {
+  0% { border-color: var(--accent); }
+  100% { border-color: transparent; }
+}
 
-.t-main { min-width: 0; }
+.t-main { min-width: 0; flex: 1; }
+.t-check {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 /* カード3段構成: 1段目パンくず/2段目タスク名/3段目見積 */
 .t-crumb { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
 .t-name { font-size: 14.5px; font-weight: 600; line-height: 1.35; }
@@ -178,9 +191,9 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
   margin-top: 18px;
   box-shadow: 0 4px 16px rgba(23,33,43,.08);
 }
-/* タスク追加はヘッダー(固定バー)を除く全画面に重ねて表示する。
+/* 全画面フォーム共通: ヘッダー(固定バー)を除く画面全体に重ねて表示する。
    --fixed-hは#fixedbarsの実高さ(JSがsyncFixedOffset()で更新)で、.wrapの余白と同じ値 */
-#add-form {
+.form-fullscreen {
   position: fixed;
   top: var(--fixed-h, 0px);
   left: 0;
