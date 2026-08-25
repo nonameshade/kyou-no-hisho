@@ -133,8 +133,10 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
 .t-item.done .t-card { opacity: .55; }
 
 /* ---------- 今日タブ:カードの長押しドラッグで時刻変更 ---------- */
-/* touch-action:noneにすると縦スワイプでのスクロールができなくなるため付けない。
-   長押し中の移動量チェック(8px)で、スクロール意図の場合は自動でキャンセルされる */
+/* touch-actionはジェスチャー開始時点の値で挙動が決まり、JSから後で変更しても
+   反映されないブラウザがあるため常時noneにしておく。その代わり、長押しが
+   確定するまで(スクロールしたい間)はJS側で手動スクロールを代行する */
+.t-item[data-draggable="1"] .t-card { touch-action: none; }
 .t-item.tl-dragging {
   transition: none;
   z-index: 5;

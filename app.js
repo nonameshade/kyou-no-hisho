@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v41"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v42"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -801,6 +801,8 @@ function updateNowLine() {
 
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
 let tlPending = null; // 長押し判定待ち { item, px, py }
+let tlScrollFallback = false; // 長押し確定前にスクロール意図と判定した後、手動スクロールを代行中か
+let tlScrollLastY = 0;
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
@@ -923,10 +925,6 @@ function tlStartDrag(item, clientY) {
   item.style.top = `${rect.top}px`;
   item.style.width = `${rect.width}px`;
   item.style.margin = "0";
-  /* ドラッグが確定した今だけtouch-actionを止め、タッチ操作でページごと
-     スクロールされてしまう(持ち上げたカードでなく背景が動く)のを防ぐ。
-     長押し判定中は付けないことで、通常のスワイプスクロールは妨げない */
-  item.style.touchAction = "none";
   item.classList.add("tl-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
   /* 掴んだ直後は元の位置のままにし、他のカードが不自然に動かないようにする */
@@ -944,6 +942,7 @@ document.addEventListener("pointerdown", (e) => {
   const item = card.closest(".t-item");
   if (!item || item.dataset.draggable !== "1") return;
   clearTimeout(tlLongPressTimer);
+  tlScrollFallback = false;
   tlPending = { item, px: e.clientX, py: e.clientY };
   tlLongPressTimer = setTimeout(() => {
     if (tlPending) tlStartDrag(tlPending.item, tlPending.py);
@@ -952,10 +951,21 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 document.addEventListener("pointermove", (e) => {
+  /* カードはtouch-action:noneのため、ブラウザは縦スワイプを一切スクロールしてくれない。
+     長押しが確定する前にスクロール意図(8px以上の移動)と判断した場合は、
+     指の移動量ぶんをこちらで代わりにスクロールする */
+  if (tlScrollFallback) {
+    const dy = tlScrollLastY - e.clientY;
+    if (dy) window.scrollBy(0, dy);
+    tlScrollLastY = e.clientY;
+    return;
+  }
   if (tlPending) {
     if (Math.abs(e.clientY - tlPending.py) > 8 || Math.abs(e.clientX - tlPending.px) > 8) {
       clearTimeout(tlLongPressTimer);
       tlPending = null;
+      tlScrollFallback = true;
+      tlScrollLastY = e.clientY;
     }
     return;
   }
@@ -969,6 +979,7 @@ document.addEventListener("pointermove", (e) => {
 document.addEventListener("pointerup", () => {
   clearTimeout(tlLongPressTimer);
   tlPending = null;
+  tlScrollFallback = false;
   if (!tlDrag) return;
   const d = tlDrag;
   tlDrag = null;
@@ -980,7 +991,6 @@ document.addEventListener("pointerup", () => {
   d.el.style.width = "";
   d.el.style.margin = "";
   d.el.style.transform = "";
-  d.el.style.touchAction = "";
   if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
   d.others.forEach((o) => { o.el.style.transform = ""; });
   suppressClick = true;
@@ -2497,16 +2507,15 @@ function updateMiniTimer() {
   const onTodayView = view === "today" && viewDate === todayKey();
   const cur = run || (onTodayView ? currentAsg() : null);
   const mine = !!(run && cur && run.id === cur.id);
-  const over = mine && isOver(cur);
+  const over = !!cur && isOver(cur); // 停止中(未着手・一時停止)でも超過していれば赤くする
   const show = !!cur;
 
   document.body.classList.toggle("overrun", !!over);
   if (show) {
     bar.classList.toggle("over", over);
     warnBtn.classList.toggle("hidden", !over);
-    textEl.textContent = mine
-      ? `作業中: ${asgTitle(cur)} — ${fmtDur(elapsedSec(cur))} / ${cur.estimateMin}:00`
-      : `次にやること: ${asgTitle(cur)}`;
+    const label = mine ? "作業中" : "次にやること";
+    textEl.textContent = `${label}: ${asgTitle(cur)} — ${fmtDur(elapsedSec(cur))} / ${fmtDur(cur.estimateMin * 60)}`;
     toggleBtn.textContent = mine ? "停止" : "再開";
     toggleBtn.dataset.id = cur.id;
   } else {
