@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v46"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v47"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -806,7 +806,8 @@ function updateNowLine() {
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
 let tlPending = null; // 長押し判定待ち { item, px, py }
 let tlScrollFallback = false; // 長押し確定前にスワイプ(スクロール)とみなした後、手動スクロールを代行中か
-let tlScrollLastY = 0;
+let tlScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
+let tlScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
@@ -961,22 +962,18 @@ document.addEventListener("pointerdown", (e) => {
   }, 450);
 });
 
-/* 1回のpointermoveで代行スクロールする最大量。まれに発生する異常な移動量の
-   イベント(端末のタッチ座標の飛びなど)が来ても、画面が一気に端まで
-   飛んでしまわないようにする安全弁 */
-const TL_MAX_SCROLL_STEP = 60;
-
 document.addEventListener("pointermove", (e) => {
   /* カードはtouch-action:noneのため、ブラウザは縦スワイプを一切スクロールしてくれない
      (長押しでのドラッグを確実に持ち上げるための制約)。長押しが確定する前に
      スクロール意図(8px以上の移動)と判断した場合は、指の移動量ぶんを
-     こちらで代わりにスクロールする */
+     こちらで代わりにスクロールする。
+     毎回「前回位置からの差分」を積み上げるとズレが蓄積し細かい振動の
+     原因になりうるため、フォールバック開始時を基準点とした絶対位置を
+     毎回計算し直す(前回フレームの誤差を引きずらない) */
   if (tlScrollFallback) {
     e.preventDefault();
-    let dy = tlScrollLastY - e.clientY;
-    dy = Math.max(-TL_MAX_SCROLL_STEP, Math.min(TL_MAX_SCROLL_STEP, dy));
-    if (dy) window.scrollBy(0, dy);
-    tlScrollLastY = e.clientY;
+    const target = tlScrollStartScrollY + (tlScrollStartY - e.clientY);
+    window.scrollTo(0, target);
     return;
   }
   if (tlPending) {
@@ -984,7 +981,8 @@ document.addEventListener("pointermove", (e) => {
       clearTimeout(tlLongPressTimer);
       tlPending = null;
       tlScrollFallback = true;
-      tlScrollLastY = e.clientY;
+      tlScrollStartY = e.clientY;
+      tlScrollStartScrollY = window.scrollY;
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
