@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v44"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v45"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -761,6 +761,10 @@ function scrollToTimelineCard(el) {
 /* 現在時刻を示す横線を#timeline内に描く。カードや時刻グラフの背後(z-index低)に表示し、
    実施中カードの中では見積に対する経過割合で補間、カード間では直前カードの下端に置く */
 function updateNowLine() {
+  /* ドラッグ中のカードはposition:fixedで指の位置に追従しているため、
+     ここで再計算すると線がそのカードの位置を拾ってしまい一緒に動いて見える。
+     呼び出し元の対策漏れがあっても崩れないよう、ここでも必ず止めておく */
+  if (tlDrag || tlPending) return;
   const box = document.getElementById("timeline");
   if (!box) return;
   let line = document.getElementById("tl-now-line");
@@ -801,8 +805,7 @@ function updateNowLine() {
 
 /* ---------- 今日タブ:カードの長押しドラッグで開始時刻を変更 ---------- */
 let tlPending = null; // 長押し判定待ち { item, px, py }
-let tlScrollFallback = false; // 長押し確定前にスクロール意図と判定した後、手動スクロールを代行中か
-let tlScrollLastY = 0;
+let tlSwipeCancelled = false; // 長押し確定前に8px以上動いてスワイプ(スクロール)とみなした後、pointerupまで無視するか
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
@@ -949,7 +952,7 @@ document.addEventListener("pointerdown", (e) => {
   const item = card.closest(".t-item");
   if (!item || item.dataset.draggable !== "1") return;
   clearTimeout(tlLongPressTimer);
-  tlScrollFallback = false;
+  tlSwipeCancelled = false;
   tlPending = { item, px: e.clientX, py: e.clientY };
   tlLongPressTimer = setTimeout(() => {
     if (tlPending) tlStartDrag(tlPending.item, tlPending.py);
@@ -958,33 +961,20 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 document.addEventListener("pointermove", (e) => {
-  /* カードはtouch-action:noneのため、ブラウザは縦スワイプを一切スクロールしてくれない。
-     長押しが確定する前にスクロール意図(8px以上の移動)と判断した場合は、
-     指の移動量ぶんをこちらで代わりにスクロールする */
-  if (tlScrollFallback) {
-    /* touch-action:noneでブロックされているぶん、ここで代行スクロールする。
-       preventDefaultも合わせて呼ばないと、端末によっては裏でネイティブの
-       スクロールも同時に走り指の動き以上に画面が動いてしまうことがある */
-    e.preventDefault();
-    const dy = tlScrollLastY - e.clientY;
-    if (dy) window.scrollBy(0, dy);
-    tlScrollLastY = e.clientY;
-    return;
-  }
+  if (tlSwipeCancelled) return; // 縦スクロールはtouch-action:pan-yによりブラウザ標準の処理に任せる
   if (tlPending) {
     if (Math.abs(e.clientY - tlPending.py) > 8 || Math.abs(e.clientX - tlPending.px) > 8) {
       clearTimeout(tlLongPressTimer);
       tlPending = null;
-      tlScrollFallback = true;
-      tlScrollLastY = e.clientY;
-      /* マウスでのドラッグ(スワイプ)はブラウザ側で移動量に関わらずclickが
+      tlSwipeCancelled = true;
+      /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
     }
     return;
   }
   if (!tlDrag) return;
-  e.preventDefault();
+  e.preventDefault(); // 長押しでドラッグ確定した後だけ、ここでスクロールを止める
   tlDrag.curY = e.clientY;
   tlUpdateAutoScroll(e.clientY);
   tlUpdateDragVisual();
@@ -993,8 +983,8 @@ document.addEventListener("pointermove", (e) => {
 document.addEventListener("pointerup", () => {
   clearTimeout(tlLongPressTimer);
   tlPending = null;
-  if (tlScrollFallback) {
-    tlScrollFallback = false;
+  if (tlSwipeCancelled) {
+    tlSwipeCancelled = false;
     setTimeout(() => { suppressClick = false; }, 80);
   }
   if (!tlDrag) return;
