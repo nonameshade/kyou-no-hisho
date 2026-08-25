@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v36"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v37"; // sw.jsのCACHE版数と揃えて更新すること
 
 const pad = (n) => String(n).padStart(2, "0");
 const todayKey = () => {
@@ -201,12 +201,15 @@ const isOver = (a) => elapsedSec(a) > a.estimateMin * 60;
 function currentAsg() {
   if (viewDate !== todayKey()) return null;
   const list = dayList(todayKey());
-  return (
-    runningAsg() ||
-    list.filter((a) => a.status !== "done" && hmToMin(a.start) <= nowMin()).pop() ||
-    list.find((a) => a.status !== "done") ||
-    null
-  );
+  const run = runningAsg();
+  if (run) return run;
+  const started = list.filter((a) => a.status !== "done" && hmToMin(a.start) <= nowMin());
+  if (started.length) {
+    /* 同じ開始時刻が複数ある場合は一番上(先に描画される方)を対象にする */
+    const latest = hmToMin(started[started.length - 1].start);
+    return started.find((a) => hmToMin(a.start) === latest);
+  }
+  return list.find((a) => a.status !== "done") || null;
 }
 
 /* ---------- 周期タスク ---------- */
@@ -661,41 +664,82 @@ function autoAdjustTimeline() {
   const items = state.assignments
     .filter((a) => a.date === viewDate)
     .sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
-  if (items.length < 2) return;
-  const origStart = items.map((a) => hmToMin(a.start));
-  const adjStart = origStart.slice();
-  let i = 0;
-  while (i < items.length) {
-    let j = i + 1;
-    while (j < items.length && origStart[j] === origStart[i]) j++;
-    const nextBoundary = j < items.length ? origStart[j] : Infinity;
-    let refStart = adjStart[i];
-    let refEst = items[i].estimateMin || 0;
-    for (let k = i + 1; k < j; k++) {
-      const candidate = refStart + refEst;
-      if (candidate >= nextBoundary) {
-        adjStart[k] = refStart; // 基準(ref)は更新しない → 以降も同じ時刻が続く
-      } else {
-        adjStart[k] = candidate;
-        refStart = candidate;
-        refEst = items[k].estimateMin || 0;
-      }
-    }
-    i = j;
-  }
   let changed = false;
-  items.forEach((a, idx) => {
-    const m = adjStart[idx];
-    const hm = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-    if (hm !== a.start) {
-      a.start = hm;
-      changed = true;
+  if (items.length >= 2) {
+    const origStart = items.map((a) => hmToMin(a.start));
+    const adjStart = origStart.slice();
+    let i = 0;
+    while (i < items.length) {
+      let j = i + 1;
+      while (j < items.length && origStart[j] === origStart[i]) j++;
+      const nextBoundary = j < items.length ? origStart[j] : Infinity;
+      let refStart = adjStart[i];
+      let refEst = items[i].estimateMin || 0;
+      for (let k = i + 1; k < j; k++) {
+        const candidate = refStart + refEst;
+        if (candidate >= nextBoundary) {
+          adjStart[k] = refStart; // 基準(ref)は更新しない → 以降も同じ時刻が続く
+        } else {
+          adjStart[k] = candidate;
+          refStart = candidate;
+          refEst = items[k].estimateMin || 0;
+        }
+      }
+      i = j;
     }
-  });
+    items.forEach((a, idx) => {
+      const hm = minToHm(adjStart[idx]);
+      if (hm !== a.start) {
+        a.start = hm;
+        changed = true;
+      }
+    });
+  }
+  if (autoAdjustPastCards()) changed = true;
   if (changed) {
     save();
     renderAll();
   }
+}
+
+/* 自動調整②: 現在時刻カード(緑)より上にある未完了カードを、空き時間へ移動する。
+   1. 上にあるカードから優先的に処理する
+   2. 空き時間を先頭(現在時刻)から探し、他のカード(緑のカード・未来のカード・完了済み
+      カード・既に移動した過去のカード)と重ならない最初の隙間に入れる
+   3. 隙間が無ければ最後のカードの後ろに置く(検索ループが自然にそこへ辿り着く) */
+function autoAdjustPastCards() {
+  const cur = currentAsg();
+  if (!cur) return false; // 今日タブ以外、または現在該当するカードが無い時は対象外
+  const list = dayList(todayKey());
+  const curIndex = list.findIndex((a) => a.id === cur.id);
+  if (curIndex <= 0) return false;
+  const pastCards = list.slice(0, curIndex).filter((a) => a.status !== "done");
+  if (!pastCards.length) return false;
+
+  const pastIds = new Set(pastCards.map((a) => a.id));
+  const occupied = list
+    .filter((a) => !pastIds.has(a.id))
+    .map((a) => ({ start: hmToMin(a.start), end: hmToMin(a.start) + (a.estimateMin || 0) }))
+    .sort((x, y) => x.start - y.start);
+
+  const now = nowMin();
+  let changed = false;
+  pastCards.forEach((a) => {
+    const est = a.estimateMin || 0;
+    let cursor = now;
+    for (const o of occupied) {
+      if (o.start > cursor && o.start - cursor >= est) break;
+      if (o.end > cursor) cursor = o.end;
+    }
+    const hm = minToHm(cursor);
+    if (hm !== a.start) {
+      a.start = hm;
+      changed = true;
+    }
+    occupied.push({ start: cursor, end: cursor + est });
+    occupied.sort((x, y) => x.start - y.start);
+  });
+  return changed;
 }
 
 function renderTimeline() {
