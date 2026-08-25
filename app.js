@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v42"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v43"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -820,11 +820,17 @@ function tlComputeStart(above, below, estimateMin) {
 }
 
 /* gapIndexに応じて他のカードをずらして隙間を空け、開始時刻プレビューを更新する。
-   掴んだ直後(まだ指を動かしていない時)はgapIndexが元の位置のままなので、
-   他のカードは動かない。実際にドラッグして位置が変わった時だけ動く */
+   掴んだ元の位置には高さ保持用のプレースホルダーを置いたままにしているため、
+   「元の位置(originalIndex)から現在のgapIndexまでの範囲」だけをずらせばよい。
+   掴んだ直後(まだ指を動かしていない時)はgapIndex===originalIndexなので、
+   他のカードは動かない。実際にドラッグして位置が変わった時だけ、その範囲だけが動く */
 function tlApplyGap(gapIndex) {
+  const orig = tlDrag.originalIndex;
   tlDrag.others.forEach((o, i) => {
-    o.el.style.transform = i >= gapIndex ? `translateY(${tlDrag.height}px)` : "";
+    let shift = 0;
+    if (gapIndex > orig && i >= orig && i < gapIndex) shift = -tlDrag.height;
+    else if (gapIndex < orig && i >= gapIndex && i < orig) shift = tlDrag.height;
+    o.el.style.transform = shift ? `translateY(${shift}px)` : "";
   });
   tlDrag.gapIndex = gapIndex;
   const above = tlDrag.others[gapIndex - 1] || null;
@@ -899,6 +905,7 @@ function tlStartDrag(item, clientY) {
     id: asgId,
     estimateMin: Number(item.dataset.est) || 0,
     height,
+    originalIndex,
     py: clientY,
     curY: clientY,
     scrollStart: window.scrollY,
