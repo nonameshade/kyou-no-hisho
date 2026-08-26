@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v55"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v56"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -988,23 +988,22 @@ function tlApplyScrollFallback() {
   if (!wrap) return;
   const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
   wrap.style.transform = offset ? `translateY(${offset}px)` : "";
-  /* #timeline-head(sticky)と#fab(fixed)は.wrapの子要素のため、.wrapに
-     transformをかけるとその影響を受けて一緒に動いてしまう(本来は
-     スクロールしても動かない要素)。逆方向のtransformで打ち消す。
-     #timeline-headはsticky指定なので、まだ吸着する位置に達していない間は
-     打ち消さずコンテンツと一緒に動かし、吸着位置を過ぎた分だけ打ち消して
-     その場に留める(ネイティブのstickyスクロールと同じ見た目にする)。
+  /* #timeline-head(sticky)は.wrapの子要素のため、.wrapにtransformをかけると
+     その影響を受けて一緒に動いてしまう(本来はスクロールしても動かない要素)。
+     逆方向のtransformで打ち消す。#timeline-headはsticky指定なので、まだ
+     吸着する位置に達していない間は打ち消さずコンテンツと一緒に動かし、
+     吸着位置を過ぎた分だけ打ち消してその場に留める
+     (ネイティブのstickyスクロールと同じ見た目にする)。
      実際の描画位置は「吸着していれば常にtlHeadStickyTop、していなければ
      tlHeadNaturalK+offset」で決まるので、そこから見た目上あるべき位置を
-     引いて必要な打ち消し量を毎回計算し直す */
+     引いて必要な打ち消し量を毎回計算し直す。
+     #fab(タスクを追加ボタン)は.wrapの外に配置しているので影響を受けない */
   const head = document.getElementById("timeline-head");
   if (head) {
     const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
     const headCounter = desired - tlHeadBaseRendered - offset;
     head.style.transform = headCounter ? `translateY(${headCounter}px)` : "";
   }
-  const fab = document.getElementById("fab");
-  if (fab) fab.style.transform = offset ? `translateX(-50%) translateY(${-offset}px)` : "";
 }
 
 document.addEventListener("pointermove", (e) => {
@@ -1080,8 +1079,6 @@ function tlPointerEnd() {
     }
     const head = document.getElementById("timeline-head");
     if (head) head.style.transform = "";
-    const fab = document.getElementById("fab");
-    if (fab) fab.style.transform = "";
     tlScrollPendingY = null;
     setTimeout(() => { suppressClick = false; }, 80);
   }
