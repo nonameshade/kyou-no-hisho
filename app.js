@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v47"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v48"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -764,7 +764,7 @@ function updateNowLine() {
   /* ドラッグ中のカードはposition:fixedで指の位置に追従しているため、
      ここで再計算すると線がそのカードの位置を拾ってしまい一緒に動いて見える。
      呼び出し元の対策漏れがあっても崩れないよう、ここでも必ず止めておく */
-  if (tlDrag || tlPending) return;
+  if (tlDrag || tlPending || tlScrollFallback) return;
   const box = document.getElementById("timeline");
   if (!box) return;
   let line = document.getElementById("tl-now-line");
@@ -2562,8 +2562,10 @@ function tick() {
   if (view !== "today") return;
   const cur = currentAsg();
   const curId = cur ? cur.id : null;
-  /* タイムラインのカードをドラッグ中/長押し判定中は再描画でDOMを差し替えない(ドラッグが壊れるため) */
-  if (tlDrag || tlPending) return;
+  /* タイムラインのカードをドラッグ中/長押し判定中/スワイプ代行スクロール中は
+     再描画でDOMを差し替えない(1秒を超える操作で毎秒のtickにより再描画が
+     割り込み、スクロールが振動して見える不具合の原因だった) */
+  if (tlDrag || tlPending || tlScrollFallback) return;
   if (curId !== renderedCurrentId || over !== renderedOverrun) {
     renderAll();
   } else {
@@ -2920,7 +2922,7 @@ document.addEventListener("visibilitychange", async () => {
     return;
   }
   if (document.visibilityState === "visible") {
-    if (tlDrag || tlPending) return; // ドラッグ中は再描画でDOMを差し替えない
+    if (tlDrag || tlPending || tlScrollFallback) return; // ドラッグ/スワイプ中は再描画でDOMを差し替えない
     if (runningAsg() && navigator.wakeLock && !wakeLock) {
       try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
     }
