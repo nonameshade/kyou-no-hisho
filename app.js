@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v59"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v60"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -572,6 +572,7 @@ function switchView(v) {
   document.getElementById("view-gantt").classList.toggle("hidden", v !== "gantt");
   document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
   renderAll();
+  updateMiniTimer(); // タブ切り替え直後もヘッダーのタイマー表示を即座に反映する
 }
 
 /* ---------- 描画:共通ヘッダー ---------- */
@@ -2697,8 +2698,8 @@ async function forceUpdate() {
 }
 
 /* ---------- ミニタイマー(タイマーが見えないときの上部バナー) ---------- */
-/* コンパクトなタイマーバナー(旧ヒーローカードを統合)。作業中は常にどのタブでも表示し、
-   未着手の「次にやること」は今日タブを見ている時だけ表示する */
+/* コンパクトなタイマーバナー(旧ヒーローカードを統合)。作業中/次にやることは
+   タブに関わらず常にヘッダーに固定表示する(今日タブの表示日が今日の時のみ) */
 function updateMiniTimer() {
   const bar = document.getElementById("mini-timer");
   const warnBtn = document.getElementById("mt-warn");
@@ -2706,8 +2707,8 @@ function updateMiniTimer() {
   const toggleBtn = document.getElementById("mt-toggle");
   if (!bar || !warnBtn || !textEl || !toggleBtn) return;
   const run = runningAsg();
-  const onTodayView = view === "today" && viewDate === todayKey();
-  const cur = run || (onTodayView ? currentAsg() : null);
+  const onToday = viewDate === todayKey();
+  const cur = run || (onToday ? currentAsg() : null);
   const mine = !!(run && cur && run.id === cur.id);
   const over = !!cur && isOver(cur); // 停止中(未着手・一時停止)でも超過していれば赤くする
   const show = !!cur;
