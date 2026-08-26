@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v49"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v50"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1007,7 +1007,12 @@ document.addEventListener("pointermove", (e) => {
   tlUpdateDragVisual();
 });
 
-document.addEventListener("pointerup", () => {
+/* pointerupだけでなくpointercancelでも同じ後片付けをする。iOS Safariは
+   長く触れ続けたタッチに対してシステム側でジェスチャーを仲裁することがあり、
+   その際pointerupを送らずpointercancelだけを送ってくることがある。
+   これを無視するとtlScrollFallback等の状態が中途半端なまま残り、
+   以後の操作と噛み合わなくなる(スワイプが長いと振動する不具合の一因) */
+function tlPointerEnd() {
   clearTimeout(tlLongPressTimer);
   tlPending = null;
   if (tlScrollFallback) {
@@ -1062,7 +1067,9 @@ document.addEventListener("pointerup", () => {
       }
     });
   }
-});
+}
+document.addEventListener("pointerup", tlPointerEnd);
+document.addEventListener("pointercancel", tlPointerEnd);
 
 /* ---------- 締め(日次ロック) ---------- */
 function renderDayClose() {
@@ -1486,7 +1493,7 @@ document.addEventListener("pointermove", (e) => {
   applySortDragPosition();
 });
 
-document.addEventListener("pointerup", () => {
+function sortPointerEnd() {
   if (!sortDrag) return;
   const d = sortDrag;
   sortDrag = null;
@@ -1526,7 +1533,9 @@ document.addEventListener("pointerup", () => {
     save();
     renderPlan();
   }
-});
+}
+document.addEventListener("pointerup", sortPointerEnd);
+document.addEventListener("pointercancel", sortPointerEnd);
 
 /* ---------- スワイプでアーカイブ(課題タブのタスク行・課題カード) ---------- */
 let swipe = null;
@@ -1575,7 +1584,7 @@ document.addEventListener("pointermove", (e) => {
   swipe.row.style.transform = `translateX(${swipe.cur}px)`; // 指に追随(枠は変形させない)
 });
 
-document.addEventListener("pointerup", () => {
+function swipePointerEnd() {
   if (!swipe) return;
   const s = swipe;
   swipe = null;
@@ -1591,7 +1600,9 @@ document.addEventListener("pointerup", () => {
     if (openSwipeRow === s.row) openSwipeRow = null;
     if (s.wrap) setTimeout(() => { if (openSwipeRow !== s.row) s.wrap.classList.remove("show-action"); }, 200);
   }
-});
+}
+document.addEventListener("pointerup", swipePointerEnd);
+document.addEventListener("pointercancel", swipePointerEnd);
 
 /* ---------- マークのドラッグ移動 ---------- *//* ---------- マークのドラッグ移動 ---------- */
 let drag = null;
@@ -1635,7 +1646,7 @@ document.addEventListener("pointermove", (e) => {
   ghost.style.width = `${G_COLW}px`;
 });
 
-document.addEventListener("pointerup", () => {
+function ganttDragPointerEnd() {
   if (!drag) return;
   const d = drag;
   drag = null;
@@ -1658,7 +1669,9 @@ document.addEventListener("pointerup", () => {
       renderGantt();
     }
   }
-});
+}
+document.addEventListener("pointerup", ganttDragPointerEnd);
+document.addEventListener("pointercancel", ganttDragPointerEnd);
 
 /* ---------- 日別詳細 ---------- *//* ---------- 日別詳細 ---------- */
 function renderDayDetail() {
