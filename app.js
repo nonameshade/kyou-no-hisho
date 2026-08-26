@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v48"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v49"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -808,6 +808,8 @@ let tlPending = null; // 長押し判定待ち { item, px, py }
 let tlScrollFallback = false; // 長押し確定前にスワイプ(スクロール)とみなした後、手動スクロールを代行中か
 let tlScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
 let tlScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
+let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
+let tlScrollRAF = null;
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
@@ -962,18 +964,27 @@ document.addEventListener("pointerdown", (e) => {
   }, 450);
 });
 
+/* 指の最新位置に合わせて実際にscrollToを反映する。pointermoveのたびに
+   同期的にscrollTo(強制レイアウトを伴う重い処理)を呼ぶと、端末によっては
+   メインスレッドが詰まってブラウザ本来の慣性/位置決めと噛み合わなくなり、
+   1秒前後続く操作でだんだん振動して見えることがあるため、
+   画面更新のタイミング(rAF)に合わせて1フレームに1回だけ反映する */
+function tlApplyScrollFallback() {
+  tlScrollRAF = null;
+  if (!tlScrollFallback || tlScrollPendingY === null) return;
+  const target = tlScrollStartScrollY + (tlScrollStartY - tlScrollPendingY);
+  window.scrollTo(0, target);
+}
+
 document.addEventListener("pointermove", (e) => {
   /* カードはtouch-action:noneのため、ブラウザは縦スワイプを一切スクロールしてくれない
      (長押しでのドラッグを確実に持ち上げるための制約)。長押しが確定する前に
      スクロール意図(8px以上の移動)と判断した場合は、指の移動量ぶんを
-     こちらで代わりにスクロールする。
-     毎回「前回位置からの差分」を積み上げるとズレが蓄積し細かい振動の
-     原因になりうるため、フォールバック開始時を基準点とした絶対位置を
-     毎回計算し直す(前回フレームの誤差を引きずらない) */
+     こちらで代わりにスクロールする */
   if (tlScrollFallback) {
     e.preventDefault();
-    const target = tlScrollStartScrollY + (tlScrollStartY - e.clientY);
-    window.scrollTo(0, target);
+    tlScrollPendingY = e.clientY;
+    if (!tlScrollRAF) tlScrollRAF = requestAnimationFrame(tlApplyScrollFallback);
     return;
   }
   if (tlPending) {
@@ -1001,6 +1012,8 @@ document.addEventListener("pointerup", () => {
   tlPending = null;
   if (tlScrollFallback) {
     tlScrollFallback = false;
+    if (tlScrollRAF) { cancelAnimationFrame(tlScrollRAF); tlScrollRAF = null; }
+    tlScrollPendingY = null;
     setTimeout(() => { suppressClick = false; }, 80);
   }
   if (!tlDrag) return;
