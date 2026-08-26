@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v51"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v52"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -985,6 +985,13 @@ function tlApplyScrollFallback() {
   if (!wrap) return;
   const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
   wrap.style.transform = offset ? `translateY(${offset}px)` : "";
+  /* #timeline-head(sticky)と#fab(fixed)は.wrapの子要素のため、.wrapに
+     transformをかけるとその影響を受けて一緒に動いてしまう(本来は
+     スクロールしても動かない要素)。逆方向のtransformで打ち消しておく */
+  const head = document.getElementById("timeline-head");
+  if (head) head.style.transform = offset ? `translateY(${-offset}px)` : "";
+  const fab = document.getElementById("fab");
+  if (fab) fab.style.transform = offset ? `translateX(-50%) translateY(${-offset}px)` : "";
 }
 
 document.addEventListener("pointermove", (e) => {
@@ -1041,6 +1048,10 @@ function tlPointerEnd() {
       }
       wrap.style.transform = "";
     }
+    const head = document.getElementById("timeline-head");
+    if (head) head.style.transform = "";
+    const fab = document.getElementById("fab");
+    if (fab) fab.style.transform = "";
     tlScrollPendingY = null;
     setTimeout(() => { suppressClick = false; }, 80);
   }
