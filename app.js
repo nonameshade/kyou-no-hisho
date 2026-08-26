@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v54"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v55"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -809,7 +809,9 @@ let tlScrollFallback = false; // 長押し確定前にスワイプ(スクロー�
 let tlScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
 let tlScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
 let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール可能な最大値(上下端のクランプ用)
-let tlHeadUnstickOffset = 0; // #timeline-headがまだ「吸着」していない時、吸着し始めるまでのoffsetの余地
+let tlHeadStickyTop = 0; // #timeline-headのsticky吸着位置(--fixed-hを解決した実際のpx値)
+let tlHeadNaturalK = 0; // #timeline-headの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
+let tlHeadBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置(吸着中ならtlHeadStickyTopと同じ)
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
@@ -991,11 +993,15 @@ function tlApplyScrollFallback() {
      スクロールしても動かない要素)。逆方向のtransformで打ち消す。
      #timeline-headはsticky指定なので、まだ吸着する位置に達していない間は
      打ち消さずコンテンツと一緒に動かし、吸着位置を過ぎた分だけ打ち消して
-     その場に留める(ネイティブのstickyスクロールと同じ見た目にする) */
+     その場に留める(ネイティブのstickyスクロールと同じ見た目にする)。
+     実際の描画位置は「吸着していれば常にtlHeadStickyTop、していなければ
+     tlHeadNaturalK+offset」で決まるので、そこから見た目上あるべき位置を
+     引いて必要な打ち消し量を毎回計算し直す */
   const head = document.getElementById("timeline-head");
   if (head) {
-    const headOffset = Math.min(0, offset - tlHeadUnstickOffset);
-    head.style.transform = headOffset ? `translateY(${-headOffset}px)` : "";
+    const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
+    const headCounter = desired - tlHeadBaseRendered - offset;
+    head.style.transform = headCounter ? `translateY(${headCounter}px)` : "";
   }
   const fab = document.getElementById("fab");
   if (fab) fab.style.transform = offset ? `translateX(-50%) translateY(${-offset}px)` : "";
@@ -1027,14 +1033,15 @@ document.addEventListener("pointermove", (e) => {
          に切り替えて実測する(同期的に戻すため見た目のちらつきは出ない) */
       const head = document.getElementById("timeline-head");
       if (head) {
-        const stickyTop = parseFloat(getComputedStyle(head).top) || 0;
+        tlHeadStickyTop = parseFloat(getComputedStyle(head).top) || 0;
         const prevPosition = head.style.position;
         head.style.position = "static";
         const naturalTop = tlScrollStartScrollY + head.getBoundingClientRect().top;
         head.style.position = prevPosition;
-        tlHeadUnstickOffset = tlScrollStartScrollY - naturalTop + stickyTop;
-      } else {
-        tlHeadUnstickOffset = 0;
+        tlHeadNaturalK = naturalTop - tlScrollStartScrollY;
+        /* フォールバック開始時点(offset=0)で実際に描画されている位置。
+           既に吸着中ならtlHeadStickyTop、していなければtlHeadNaturalKに一致する */
+        tlHeadBaseRendered = Math.max(tlHeadStickyTop, tlHeadNaturalK);
       }
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
