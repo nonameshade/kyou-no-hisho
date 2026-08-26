@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v58"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v59"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -872,14 +872,24 @@ function tlAutoScrollTick() {
   tlAutoScrollRAF = requestAnimationFrame(tlAutoScrollTick);
 }
 
-/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする */
+/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする。
+   上端側は画面の物理的な最上部(0px)ではなく、タイムライン見出し(sticky)の
+   下端を基準にする。見出しの高さぶん、実際にカードが表示され得る領域は
+   画面上端よりだいぶ下から始まるため、物理的な最上部基準のままだと
+   見出しの下まで来ただけではスクロールが始まらず使いにくかった */
 function tlUpdateAutoScroll(clientY) {
   const EDGE = 70;
   const MAX_SPEED = 9;
   const vh = window.innerHeight;
+  const head = document.getElementById("timeline-head");
+  const topEdge = head ? head.getBoundingClientRect().bottom : 0;
   let speed = 0;
-  if (clientY < EDGE) speed = -MAX_SPEED * (1 - clientY / EDGE);
-  else if (clientY > vh - EDGE) speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
+  if (clientY < topEdge + EDGE) {
+    const dist = Math.max(0, topEdge + EDGE - clientY);
+    speed = -MAX_SPEED * Math.min(1, dist / EDGE);
+  } else if (clientY > vh - EDGE) {
+    speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
+  }
   tlAutoScrollSpeed = speed;
   if (speed && !tlAutoScrollRAF) tlAutoScrollRAF = requestAnimationFrame(tlAutoScrollTick);
 }
