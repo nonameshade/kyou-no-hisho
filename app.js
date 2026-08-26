@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v53"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v54"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1021,12 +1021,18 @@ document.addEventListener("pointermove", (e) => {
       tlScrollStartScrollY = window.scrollY;
       tlScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       /* #timeline-headがまだ吸着(sticky)していない場合、実際に吸着し始める
-         スクロール量までは一緒に動かしたい。offsetTopはsticky特有のズレを
-         含まない「本来の(吸着していない)位置」を返すのでこれを基準にする */
+         スクロール量までは一緒に動かしたい。「本来の(吸着していない)位置」が
+         必要だが、offsetTopは既に吸着中の場合にブラウザによって現在の吸着
+         位置を返してしまうことがあり信頼できないため、一時的にposition:static
+         に切り替えて実測する(同期的に戻すため見た目のちらつきは出ない) */
       const head = document.getElementById("timeline-head");
       if (head) {
         const stickyTop = parseFloat(getComputedStyle(head).top) || 0;
-        tlHeadUnstickOffset = tlScrollStartScrollY - head.offsetTop + stickyTop;
+        const prevPosition = head.style.position;
+        head.style.position = "static";
+        const naturalTop = tlScrollStartScrollY + head.getBoundingClientRect().top;
+        head.style.position = prevPosition;
+        tlHeadUnstickOffset = tlScrollStartScrollY - naturalTop + stickyTop;
       } else {
         tlHeadUnstickOffset = 0;
       }
