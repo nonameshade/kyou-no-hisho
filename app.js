@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v56"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v57"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -814,6 +814,8 @@ let tlHeadNaturalK = 0; // #timeline-headの本来の(吸着していない)位�
 let tlHeadBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置(吸着中ならtlHeadStickyTopと同じ)
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
+let tlScrollVelSamples = []; // 慣性スクロール用、直近の指位置サンプル { t, y }
+let tlMomentumRAF = null; // 指を離した後の慣性スクロールのrAFハンドル
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
 let tlLongPressTimer = null;
 let tlAutoScrollSpeed = 0;
@@ -961,6 +963,10 @@ document.addEventListener("pointerdown", (e) => {
   if (!item || item.dataset.draggable !== "1") return;
   clearTimeout(tlLongPressTimer);
   tlScrollFallback = false;
+  tlScrollVelSamples = [];
+  /* 慣性スクロール中に新しくカードへ触れたら、指で画面を止めたのと同じなので
+     慣性を打ち切る */
+  if (tlMomentumRAF) { cancelAnimationFrame(tlMomentumRAF); tlMomentumRAF = null; }
   tlPending = { item, px: e.clientX, py: e.clientY };
   tlLongPressTimer = setTimeout(() => {
     if (tlPending) tlStartDrag(tlPending.item, tlPending.py);
@@ -1015,6 +1021,12 @@ document.addEventListener("pointermove", (e) => {
     e.preventDefault();
     tlScrollPendingY = e.clientY;
     if (!tlScrollRAF) tlScrollRAF = requestAnimationFrame(tlApplyScrollFallback);
+    /* 慣性スクロール用に直近100ms分だけ指位置を記録しておく(指を離した瞬間の
+       速度を、離す直前の一定時間の移動量から推定するため) */
+    const now = performance.now();
+    tlScrollVelSamples.push({ t: now, y: e.clientY });
+    const cutoff = now - 100;
+    while (tlScrollVelSamples.length > 1 && tlScrollVelSamples[0].t < cutoff) tlScrollVelSamples.shift();
     return;
   }
   if (tlPending) {
@@ -1055,6 +1067,46 @@ document.addEventListener("pointermove", (e) => {
   tlUpdateDragVisual();
 });
 
+const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールしない(離しただけの動作とみなす)
+const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
+const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
+
+/* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
+   ネイティブスクロールでの「離した後も少し流れる」挙動を手動で再現する。
+   指はもう画面に触れていないので、スワイプ中に問題になったタッチ処理との
+   競合(振動の原因だったもの)は起きない */
+function tlStartMomentum(v0) {
+  if (tlMomentumRAF) { cancelAnimationFrame(tlMomentumRAF); tlMomentumRAF = null; }
+  let velocity = Math.max(-TL_MOMENTUM_MAX_VELOCITY, Math.min(TL_MOMENTUM_MAX_VELOCITY, v0));
+  if (Math.abs(velocity) < TL_MOMENTUM_MIN_VELOCITY) return;
+  const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  let lastT = performance.now();
+  function step() {
+    const now = performance.now();
+    const dt = Math.min(50, now - lastT); // タブ切替復帰等での大きなdtを抑える
+    lastT = now;
+    const sign = velocity > 0 ? 1 : -1;
+    let nextVelocity = velocity - sign * TL_MOMENTUM_DECEL * dt;
+    if (sign > 0 && nextVelocity < 0) nextVelocity = 0;
+    if (sign < 0 && nextVelocity > 0) nextVelocity = 0;
+    const avgVelocity = (velocity + nextVelocity) / 2;
+    velocity = nextVelocity;
+    let y = window.scrollY + avgVelocity * dt;
+    let stop = false;
+    if (y <= 0) { y = 0; stop = true; }
+    else if (y >= maxY) { y = maxY; stop = true; }
+    window.scrollTo(0, y);
+    tlMomentumRAF = (!stop && velocity !== 0) ? requestAnimationFrame(step) : null;
+  }
+  tlMomentumRAF = requestAnimationFrame(step);
+}
+
+/* 慣性スクロール中に画面のどこかに触れたら、指で画面を止めたのと同じなので
+   慣性を打ち切る(タイムラインのカード以外に触れた場合もこちらで対応) */
+document.addEventListener("pointerdown", () => {
+  if (tlMomentumRAF) { cancelAnimationFrame(tlMomentumRAF); tlMomentumRAF = null; }
+});
+
 /* pointerupだけでなくpointercancelでも同じ後片付けをする。iOS Safariは
    長く触れ続けたタッチに対してシステム側でジェスチャーを仲裁することがあり、
    その際pointerupを送らずpointercancelだけを送ってくることがある。
@@ -1079,6 +1131,17 @@ function tlPointerEnd() {
     }
     const head = document.getElementById("timeline-head");
     if (head) head.style.transform = "";
+    /* 指を離す直前(直近100ms)の移動速度から慣性スクロールを開始する */
+    if (tlScrollVelSamples.length >= 2) {
+      const first = tlScrollVelSamples[0];
+      const last = tlScrollVelSamples[tlScrollVelSamples.length - 1];
+      const dt = last.t - first.t;
+      if (dt > 0) {
+        const fingerVel = (last.y - first.y) / dt; // px/ms、指が下向きなら正
+        tlStartMomentum(-fingerVel); // スクロール位置は指と逆方向に動く
+      }
+    }
+    tlScrollVelSamples = [];
     tlScrollPendingY = null;
     setTimeout(() => { suppressClick = false; }, 80);
   }
