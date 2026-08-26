@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v50"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v51"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -808,6 +808,7 @@ let tlPending = null; // 長押し判定待ち { item, px, py }
 let tlScrollFallback = false; // 長押し確定前にスワイプ(スクロール)とみなした後、手動スクロールを代行中か
 let tlScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
 let tlScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
+let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール可能な最大値(上下端のクランプ用)
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
@@ -964,16 +965,26 @@ document.addEventListener("pointerdown", (e) => {
   }, 450);
 });
 
-/* 指の最新位置に合わせて実際にscrollToを反映する。pointermoveのたびに
-   同期的にscrollTo(強制レイアウトを伴う重い処理)を呼ぶと、端末によっては
-   メインスレッドが詰まってブラウザ本来の慣性/位置決めと噛み合わなくなり、
-   1秒前後続く操作でだんだん振動して見えることがあるため、
-   画面更新のタイミング(rAF)に合わせて1フレームに1回だけ反映する */
+/* フォールバック開始時の基準点からのオフセットを、上下端を超えないようクランプする */
+function tlClampScrollOffset(offset) {
+  const minOffset = tlScrollStartScrollY - tlScrollMaxY;
+  const maxOffset = tlScrollStartScrollY;
+  return Math.max(minOffset, Math.min(maxOffset, offset));
+}
+
+/* 指の最新位置に合わせて.wrap全体をtransformで見た目だけ動かす。
+   window.scrollToはレイアウトを伴う重い処理で、指が触れたまま連続して
+   動いている間はiOS側のタッチ追跡処理と競合して描画が追いつかず振動して
+   見えることがあったため、スワイプ中はGPU合成だけで完結するtransformで
+   見た目を追従させ、実際のスクロール位置は指を離した瞬間に一度だけ確定させる
+   (tlPointerEndを参照) */
 function tlApplyScrollFallback() {
   tlScrollRAF = null;
   if (!tlScrollFallback || tlScrollPendingY === null) return;
-  const target = tlScrollStartScrollY + (tlScrollStartY - tlScrollPendingY);
-  window.scrollTo(0, target);
+  const wrap = document.querySelector(".wrap");
+  if (!wrap) return;
+  const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
+  wrap.style.transform = offset ? `translateY(${offset}px)` : "";
 }
 
 document.addEventListener("pointermove", (e) => {
@@ -994,6 +1005,7 @@ document.addEventListener("pointermove", (e) => {
       tlScrollFallback = true;
       tlScrollStartY = e.clientY;
       tlScrollStartScrollY = window.scrollY;
+      tlScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
@@ -1018,6 +1030,17 @@ function tlPointerEnd() {
   if (tlScrollFallback) {
     tlScrollFallback = false;
     if (tlScrollRAF) { cancelAnimationFrame(tlScrollRAF); tlScrollRAF = null; }
+    /* スワイプ中はtransformで見た目だけ動かしていたので、指を離す瞬間に
+       実際のスクロール位置を確定し、同じフレーム内でtransformを消す
+       (どちらか一方だけ先に行うと一瞬位置がずれて見えるため同時に行う) */
+    const wrap = document.querySelector(".wrap");
+    if (wrap) {
+      if (tlScrollPendingY !== null) {
+        const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
+        window.scrollTo(0, tlScrollStartScrollY - offset);
+      }
+      wrap.style.transform = "";
+    }
     tlScrollPendingY = null;
     setTimeout(() => { suppressClick = false; }, 80);
   }
