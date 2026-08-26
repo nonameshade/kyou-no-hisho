@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v52"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v53"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -809,6 +809,7 @@ let tlScrollFallback = false; // 長押し確定前にスワイプ(スクロー�
 let tlScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
 let tlScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
 let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール可能な最大値(上下端のクランプ用)
+let tlHeadUnstickOffset = 0; // #timeline-headがまだ「吸着」していない時、吸着し始めるまでのoffsetの余地
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlDrag = null; // ドラッグ中 { el, id, estimateMin, py, curY, scrollStart, others, gapIndex }
@@ -987,9 +988,15 @@ function tlApplyScrollFallback() {
   wrap.style.transform = offset ? `translateY(${offset}px)` : "";
   /* #timeline-head(sticky)と#fab(fixed)は.wrapの子要素のため、.wrapに
      transformをかけるとその影響を受けて一緒に動いてしまう(本来は
-     スクロールしても動かない要素)。逆方向のtransformで打ち消しておく */
+     スクロールしても動かない要素)。逆方向のtransformで打ち消す。
+     #timeline-headはsticky指定なので、まだ吸着する位置に達していない間は
+     打ち消さずコンテンツと一緒に動かし、吸着位置を過ぎた分だけ打ち消して
+     その場に留める(ネイティブのstickyスクロールと同じ見た目にする) */
   const head = document.getElementById("timeline-head");
-  if (head) head.style.transform = offset ? `translateY(${-offset}px)` : "";
+  if (head) {
+    const headOffset = Math.min(0, offset - tlHeadUnstickOffset);
+    head.style.transform = headOffset ? `translateY(${-headOffset}px)` : "";
+  }
   const fab = document.getElementById("fab");
   if (fab) fab.style.transform = offset ? `translateX(-50%) translateY(${-offset}px)` : "";
 }
@@ -1013,6 +1020,16 @@ document.addEventListener("pointermove", (e) => {
       tlScrollStartY = e.clientY;
       tlScrollStartScrollY = window.scrollY;
       tlScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      /* #timeline-headがまだ吸着(sticky)していない場合、実際に吸着し始める
+         スクロール量までは一緒に動かしたい。offsetTopはsticky特有のズレを
+         含まない「本来の(吸着していない)位置」を返すのでこれを基準にする */
+      const head = document.getElementById("timeline-head");
+      if (head) {
+        const stickyTop = parseFloat(getComputedStyle(head).top) || 0;
+        tlHeadUnstickOffset = tlScrollStartScrollY - head.offsetTop + stickyTop;
+      } else {
+        tlHeadUnstickOffset = 0;
+      }
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
