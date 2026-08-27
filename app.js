@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v60"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v61"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -487,6 +487,16 @@ function createSingleTask(title, defStart, estimateMin) {
   return t;
 }
 
+/* 今日タブへのタスク追加で開始時刻が未入力の時のデフォルト値。
+   今日の最後のカード(開始時刻が一番遅いもの)の終了時刻(開始+見積)を返す。
+   今日にまだ何もなければnullを返す */
+function lastTodayEnd() {
+  const list = dayItems(todayKey());
+  if (!list.length) return null;
+  const last = list[list.length - 1];
+  return minToHm(hmToMin(last.start) + (last.estimateMin || 0));
+}
+
 function addAdhoc(title, start, estimateMin) {
   if (!execEditable(viewDate)) return;
   const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
@@ -662,14 +672,26 @@ function autoAdjustTimeline() {
    1. 上にあるカードから優先的に処理する
    2. 空き時間を先頭(現在時刻)から探し、他のカード(緑のカード・未来のカード・完了済み
       カード・既に移動した過去のカード)と重ならない最初の隙間に入れる
-   3. 隙間が無ければ最後のカードの後ろに置く(検索ループが自然にそこへ辿り着く) */
+   3. 隙間が無ければ最後のカードの後ろに置く(検索ループが自然にそこへ辿り着く)
+   例外: 開始時刻は過去でも、既に計測履歴があり(経過時間>0)、かつ
+   「開始時刻+残見積(見積-経過)」が現在時刻より未来のカードは対象外とし、
+   そのままの位置に残す(実施中で時間がかかっているカードが後ろへ回されて
+   しまうのを防ぐ) */
 function autoAdjustPastCards(now) {
   const cur = currentAsg();
   if (!cur) return false; // 今日タブ以外、または現在該当するカードが無い時は対象外
   const list = dayList(todayKey());
   const curIndex = list.findIndex((a) => a.id === cur.id);
   if (curIndex <= 0) return false;
-  const pastCards = list.slice(0, curIndex).filter((a) => a.status !== "done");
+  const pastCards = list.slice(0, curIndex).filter((a) => {
+    if (a.status === "done") return false;
+    const elapsed = elapsedSec(a);
+    if (elapsed > 0) {
+      const remainingMin = Math.max(0, a.estimateMin - elapsed / 60);
+      if (hmToMin(a.start) + remainingMin > now) return false;
+    }
+    return true;
+  });
   if (!pastCards.length) return false;
 
   const pastIds = new Set(pastCards.map((a) => a.id));
@@ -2804,7 +2826,9 @@ document.addEventListener("click", (e) => {
     document.getElementById("fab").classList.add("hidden");
     syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
     lockBodyScroll();
-    document.getElementById("f-start").value = nowHM();
+    /* 開始時刻は未入力をデフォルトにする。空のまま入力補助(ネイティブの時刻選択)を
+       開くと、ブラウザ標準の挙動で現在時刻が基準として表示される */
+    document.getElementById("f-start").value = "";
     /* 今日タブで、閲覧中の日が編集可能な時だけ「今日に追加する」を選べる。それ以外はタスク登録のみ */
     const canToday = execEditable(viewDate);
     const todayChk = document.getElementById("f-today");
@@ -2819,13 +2843,16 @@ document.addEventListener("click", (e) => {
   } else if (action === "add-confirm") {
     const title = document.getElementById("f-title").value;
     if (!title.trim()) return;
-    const start = document.getElementById("f-start").value || nowHM();
+    const startInput = document.getElementById("f-start").value;
     const est = document.getElementById("f-est").value;
     const todayChk = document.getElementById("f-today");
     if (todayChk.checked && !todayChk.disabled) {
+      /* 開始時刻が未入力なら、今日の最後のカードの終了時刻(開始+見積)を
+         自動設定する。今日にまだ何もなければ現在時刻にする */
+      const start = startInput || lastTodayEnd() || nowHM();
       addAdhoc(title, start, est);
     } else {
-      createSingleTask(title, start, est);
+      createSingleTask(title, startInput, est);
       save();
       renderAll();
     }
