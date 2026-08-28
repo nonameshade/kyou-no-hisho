@@ -321,6 +321,10 @@ body[data-view="plan"] .wrap { max-width: 760px; }
      開始のたびに合成レイヤーが新規作成され、その瞬間に一瞬ちらつくことが
      あったための対策。スワイプ中の実際の値はJS側で書き換える */
   transform: translateY(0px);
+  /* Safari向けの定番のちらつき対策(3D合成の描画経路を強制し、
+     背面の再描画を安定させる)。will-change等とは別系統の対策として試す */
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 .g-row, .p-row {
