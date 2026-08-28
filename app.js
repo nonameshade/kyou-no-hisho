@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v72"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v73"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -853,6 +853,7 @@ let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール�
 let tlHeadStickyTop = 0; // #timeline-headのsticky吸着位置(--fixed-hを解決した実際のpx値)
 let tlHeadNaturalK = 0; // #timeline-headの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
 let tlHeadBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置(吸着中ならtlHeadStickyTopと同じ)
+let tlHeadFrameCount = 0; // フォールバック開始からの累積フレーム数(下スワイプ直後のちらつき対策で最初の数フレームはヘッダーの反映を遅らせる)
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlScrollVelSamples = []; // 慣性スクロール用、直近の指位置サンプル { t, y }
@@ -1065,9 +1066,16 @@ function tlApplyScrollFallback() {
      #fab(タスクを追加ボタン)は.wrapの外に配置しているので影響を受けない */
   const head = document.getElementById("timeline-head");
   if (head) {
-    const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
-    const headCounter = desired - tlHeadBaseRendered - offset;
-    head.style.transform = `translateY(${headCounter}px)`;
+    tlHeadFrameCount++;
+    /* スワイプ確定直後の数フレームはヘッダーへの反映をあえて遅らせる。
+       いきなり下向きに動き出す瞬間に一瞬ちらつく不具合の対策として、
+       上→下と切り返した時(自然に助走がつく)は起きないという報告から、
+       同じような"助走"を人工的に作って試している(実験的な対策) */
+    if (tlHeadFrameCount > 2) {
+      const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
+      const headCounter = desired - tlHeadBaseRendered - offset;
+      head.style.transform = `translateY(${headCounter}px)`;
+    }
   }
 }
 
@@ -1113,6 +1121,7 @@ document.addEventListener("pointermove", (e) => {
            既に吸着中ならtlHeadStickyTop、していなければtlHeadNaturalKに一致する */
         tlHeadBaseRendered = Math.max(tlHeadStickyTop, tlHeadNaturalK);
       }
+      tlHeadFrameCount = 0;
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
