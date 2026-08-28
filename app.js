@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v69"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v70"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1047,7 +1047,12 @@ function tlApplyScrollFallback() {
   const wrap = document.querySelector(".wrap");
   if (!wrap) return;
   const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
-  wrap.style.transform = offset ? `translateY(${offset}px)` : "";
+  /* 移動量が0の時だけtransformを消す(空文字に戻す)と、スワイプ開始直後など
+     0を跨ぐたびにtransformプロパティの有無が切り替わり、ブラウザが合成用
+     レイヤーを都度破棄・再生成して一瞬ちらつくことがある。スワイプ中は
+     0でも明示的にtranslateY(0px)を指定し続け、プロパティ自体は消さない
+     (実際に消すのはtlFinalizeScrollFallbackでスワイプが終わった時だけ) */
+  wrap.style.transform = `translateY(${offset}px)`;
   /* #timeline-head(sticky)は.wrapの子要素のため、.wrapにtransformをかけると
      その影響を受けて一緒に動いてしまう(本来はスクロールしても動かない要素)。
      逆方向のtransformで打ち消す。#timeline-headはsticky指定なので、まだ
@@ -1062,7 +1067,7 @@ function tlApplyScrollFallback() {
   if (head) {
     const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
     const headCounter = desired - tlHeadBaseRendered - offset;
-    head.style.transform = headCounter ? `translateY(${headCounter}px)` : "";
+    head.style.transform = `translateY(${headCounter}px)`;
   }
 }
 
