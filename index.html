@@ -174,29 +174,6 @@
         <div id="issue-list"></div>
       </section>
 
-      <section id="issue-form" class="add-form hidden">
-        <div class="form-title" id="issue-form-title">課題を追加</div>
-        <label class="f-label">課題
-          <input type="text" id="i-title" placeholder="例: Amazonレビュー" maxlength="80">
-        </label>
-        <label class="f-label">目的
-          <input type="text" id="i-purpose" placeholder="例: Vineユーザーに選ばれること" maxlength="120">
-        </label>
-        <label class="f-label">期日
-          <input type="date" id="i-deadline">
-        </label>
-        <div class="f-label">目標(ランク別)</div>
-        <div id="target-rows"></div>
-        <button class="sbtn muted" data-action="target-add" style="margin-top:8px;">+ 目標を追加</button>
-        <div class="btn-row">
-          <button class="btn" data-action="issue-cancel">やめる</button>
-          <button class="btn solid" data-action="issue-save">保存する</button>
-        </div>
-        <div class="btn-row hidden" id="issue-delete-row">
-          <button class="btn danger" data-action="issue-delete">この課題を削除</button>
-        </div>
-      </section>
-
       <section class="plan-block">
         <div class="plan-head">
           <h2 class="section-label">未分類のタスク</h2>
@@ -207,8 +184,32 @@
 
     </div>
 
-    <!-- タスク編集フォーム: どのタブからでも(今日タブの鉛筆アイコン含め)開けるようタブの外に配置 -->
-    <section id="task-form" class="add-form hidden">
+    <!-- 課題編集フォーム: タブの外に配置し、今日タブのタスク追加と同様の全画面表示にする -->
+    <section id="issue-form" class="add-form form-fullscreen hidden">
+      <div class="form-title" id="issue-form-title">課題を追加</div>
+      <label class="f-label">課題
+        <input type="text" id="i-title" placeholder="例: Amazonレビュー" maxlength="80">
+      </label>
+      <label class="f-label">目的
+        <input type="text" id="i-purpose" placeholder="例: Vineユーザーに選ばれること" maxlength="120">
+      </label>
+      <label class="f-label">期日
+        <input type="date" id="i-deadline">
+      </label>
+      <div class="f-label">目標(ランク別)</div>
+      <div id="target-rows"></div>
+      <button class="sbtn muted" data-action="target-add" style="margin-top:8px;">+ 目標を追加</button>
+      <div class="btn-row">
+        <button class="btn" data-action="issue-cancel">やめる</button>
+        <button class="btn solid" data-action="issue-save">保存する</button>
+      </div>
+      <div class="btn-row hidden" id="issue-delete-row">
+        <button class="btn danger" data-action="issue-delete">この課題を削除</button>
+      </div>
+    </section>
+
+    <!-- タスク編集フォーム: どのタブからでも(今日タブの鉛筆アイコン含め)開けるようタブの外に配置。全画面表示 -->
+    <section id="task-form" class="add-form form-fullscreen hidden">
       <div class="form-title" id="task-form-title">タスクを追加</div>
       <input type="text" id="t-title" placeholder="タスク名" maxlength="80">
       <div class="form-row">

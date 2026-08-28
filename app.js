@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v64"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v65"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2385,9 +2385,10 @@ function openIssueForm(issue) {
   const targets = issue && issue.targets && issue.targets.length ? issue.targets : [{ rank: "S", text: "" }, { rank: "A", text: "" }, { rank: "B", text: "" }];
   targets.forEach((t) => addTargetRow(t.rank, t.text));
   document.getElementById("issue-delete-row").classList.toggle("hidden", !issue);
-  const form = document.getElementById("issue-form");
-  form.classList.remove("hidden");
-  form.scrollIntoView({ behavior: "smooth" });
+  document.getElementById("issue-form").classList.remove("hidden");
+  document.getElementById("fab").classList.add("hidden");
+  syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
+  lockBodyScroll();
   document.getElementById("i-title").focus();
 }
 
@@ -2413,6 +2414,8 @@ function saveIssueForm() {
   }
   editingIssueId = null;
   document.getElementById("issue-form").classList.add("hidden");
+  document.getElementById("fab").classList.remove("hidden");
+  unlockBodyScroll();
   save();
   renderPlan();
 }
@@ -2508,9 +2511,10 @@ function openTaskForm(task, parentId, presetIssueId) {
   }
   document.getElementById("task-delete-row").classList.toggle("hidden", !task);
   updateRecVisibility();
-  const form = document.getElementById("task-form");
-  form.classList.remove("hidden");
-  form.scrollIntoView({ behavior: "smooth" });
+  document.getElementById("task-form").classList.remove("hidden");
+  document.getElementById("fab").classList.add("hidden");
+  syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
+  lockBodyScroll();
   document.getElementById("t-title").focus();
 }
 
@@ -2576,6 +2580,8 @@ function saveTaskForm() {
   }
   editingTaskId = null;
   document.getElementById("task-form").classList.add("hidden");
+  document.getElementById("fab").classList.remove("hidden");
+  unlockBodyScroll();
   if (data.issueId) {
     openIssueIds.add(data.issueId); // 保存先の課題を開いた状態にする
     saveOpenIssues();
@@ -3080,12 +3086,16 @@ document.addEventListener("click", (e) => {
   else if (action === "issue-cancel") {
     editingIssueId = null;
     document.getElementById("issue-form").classList.add("hidden");
+    document.getElementById("fab").classList.remove("hidden");
+    unlockBodyScroll();
   } else if (action === "issue-save") saveIssueForm();
   else if (action === "issue-delete") {
     if (editingIssueId && confirm("この課題を削除しますか?(タスクは残ります)")) {
       removeIssue(editingIssueId);
       editingIssueId = null;
       document.getElementById("issue-form").classList.add("hidden");
+      document.getElementById("fab").classList.remove("hidden");
+      unlockBodyScroll();
     }
   } else if (action === "target-add") {
     addTargetRow("", "");
@@ -3102,6 +3112,8 @@ document.addEventListener("click", (e) => {
     editingTaskId = null;
     taskFormReturnAnchor = null;
     document.getElementById("task-form").classList.add("hidden");
+    document.getElementById("fab").classList.remove("hidden");
+    unlockBodyScroll();
     /* 戻り先がない(親を持たない新規追加)ときは何もしない。
        編集の取りやめは本人の行へ、子タスク追加の取りやめは親の行へ戻す */
     if (anchorId) {
@@ -3132,6 +3144,8 @@ document.addEventListener("click", (e) => {
       removeTaskDef(editingTaskId);
       editingTaskId = null;
       document.getElementById("task-form").classList.add("hidden");
+      document.getElementById("fab").classList.remove("hidden");
+      unlockBodyScroll();
       requestAnimationFrame(() => {
         const el =
           (anchorTask && document.querySelector(`.p-row[data-task="${anchorTask}"]`)) ||
