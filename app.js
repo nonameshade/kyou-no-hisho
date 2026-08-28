@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v62"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v63"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1875,6 +1875,77 @@ function ganttDragPointerEnd() {
 }
 document.addEventListener("pointerup", ganttDragPointerEnd);
 document.addEventListener("pointercancel", ganttDragPointerEnd);
+
+/* ---------- 横スワイプでのタブ切り替え ---------- */
+/* 今日/計画/課題タブを横スワイプで切り替える。既に横方向の操作が
+   割り当てられている領域(ガントの横スクロール・マークのドラッグ、課題タブの
+   アーカイブスワイプ、並べ替えハンドル、今日タブのカード)は対象外にし、
+   既存の操作を優先する。全画面フォーム表示中(lockBodyScroll中)も対象外 */
+const TAB_ORDER = ["today", "gantt", "plan"];
+let tabSwipe = null; // { startX, startY, curX, horiz, el }
+
+function tabSwipeExcluded(target) {
+  return !!(
+    target.closest("#gantt") ||
+    target.closest(".swipe-target") ||
+    target.closest(".drag-h") ||
+    target.closest("#timeline .t-card") ||
+    target.closest("input, textarea, select")
+  );
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
+  if (tabSwipeExcluded(e.target)) return;
+  const el = document.getElementById(`view-${view}`);
+  if (!el) return;
+  tabSwipe = { startX: e.clientX, startY: e.clientY, curX: e.clientX, horiz: null, el };
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (!tabSwipe) return;
+  const dx = e.clientX - tabSwipe.startX;
+  const dy = e.clientY - tabSwipe.startY;
+  if (tabSwipe.horiz === null) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    tabSwipe.horiz = Math.abs(dx) > Math.abs(dy);
+    if (!tabSwipe.horiz) { tabSwipe = null; return; } // 縦方向の動きなら諦めて通常のスクロールに譲る
+    tabSwipe.el.style.transition = "none";
+  }
+  tabSwipe.curX = e.clientX;
+  e.preventDefault();
+  tabSwipe.el.style.transform = `translateX(${dx}px)`;
+});
+
+function tabSwipeEnd() {
+  if (!tabSwipe) return;
+  const s = tabSwipe;
+  tabSwipe = null;
+  if (!s.horiz) return;
+  const dx = s.curX - s.startX;
+  const THRESHOLD = 80; // px。これ未満なら元のタブに戻す
+  const idx = TAB_ORDER.indexOf(view);
+  let targetIdx = idx;
+  if (dx <= -THRESHOLD && idx < TAB_ORDER.length - 1) targetIdx = idx + 1; // 左スワイプ→次のタブ
+  else if (dx >= THRESHOLD && idx > 0) targetIdx = idx - 1; // 右スワイプ→前のタブ
+
+  s.el.style.transition = "transform .18s ease";
+  if (targetIdx !== idx) {
+    s.el.style.transform = `translateX(${dx < 0 ? "-100%" : "100%"})`;
+    setTimeout(() => {
+      s.el.style.transition = "";
+      s.el.style.transform = "";
+      switchView(TAB_ORDER[targetIdx]);
+      window.scrollTo(0, 0); // タブ切り替え後はスクロール位置を一番上にする
+    }, 180);
+  } else {
+    /* スワイプ量が閾値未満: 元のタブに戻す。この場合はスクロール位置を変えない */
+    s.el.style.transform = "";
+    setTimeout(() => { s.el.style.transition = ""; }, 180);
+  }
+}
+document.addEventListener("pointerup", tabSwipeEnd);
+document.addEventListener("pointercancel", tabSwipeEnd);
 
 /* ---------- 日別詳細 ---------- *//* ---------- 日別詳細 ---------- */
 function renderDayDetail() {
