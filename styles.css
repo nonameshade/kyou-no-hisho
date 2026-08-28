@@ -23,7 +23,6 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
   transition: background .6s;
   -webkit-text-size-adjust: 100%;
-  overflow-x: hidden; /* タブの横スワイプ切り替えアニメーション中に横スクロールバーが出ないようにする */
 }
 
 /* スマホ標準のタップ時フラッシュ(灰色ハイライト)を消し、下のカスタムhover/activeに統一する */
