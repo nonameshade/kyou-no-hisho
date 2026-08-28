@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v75"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v76"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1130,41 +1130,32 @@ const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールし
 const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
-/* スワイプ/慣性スクロールを終える。実際のスクロール位置を一度だけ確定する。
-   transformで見た目だけ動かしていた状態(.wrap/#timeline-head)は、この時点
-   ではまだ解除しない。scrollTo直後はブラウザがまだ新しいスクロール位置に
-   追従しきっていないことがあり、その瞬間にtransformも同時に消すと
-   ネイティブのsticky描画へ切り替わる一瞬が乱れて見えることがあった
-   (ちらつきの原因の可能性)。見せかけの表示は最後の状態のまま数フレーム
-   維持し(この間は見た目が一切変化しない)、ブラウザが追従したと見なせる
-   頃合いでtlClearScrollFallbackTransformsがまとめて解除する */
+/* スワイプ/慣性スクロールを終える。transformで見た目だけ動かしていた状態から、
+   実際のスクロール位置を一度だけ確定し、transformを解除する。
+   (transformの解除を実スクロール確定より遅らせる案を試したが、実スクロール
+   移動分と残っている見せかけのtransform移動分が二重に足し算されて画面
+   全体がずれてしまったため、両方を同時に確定・解除する方式に戻した) */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
-  if (tlScrollPendingY !== null) {
-    /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
-       ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
-       window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
-       (elastic bounce)、一瞬ヘッダーが乱れて見える一因になりうるため */
-    const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-    const minOffset = tlScrollStartScrollY - freshMaxY;
-    const maxOffset = tlScrollStartScrollY;
-    const rawOffset = tlScrollPendingY - tlScrollStartY;
-    const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-    window.scrollTo(0, tlScrollStartScrollY - offset);
-  }
-  tlScrollPendingY = null;
-  requestAnimationFrame(() => requestAnimationFrame(tlClearScrollFallbackTransforms));
-}
-
-/* tlFinalizeScrollFallbackの数フレーム後に呼ばれ、.wrap/#timeline-headの
-   transformをまとめて解除する。その間に新しいスワイプが始まっていたら
-   (tlScrollFallbackが再びtrueになっていたら)何もしない */
-function tlClearScrollFallbackTransforms() {
-  if (tlScrollFallback) return;
   const wrap = document.querySelector(".wrap");
-  if (wrap) wrap.style.transform = "";
+  if (wrap) {
+    if (tlScrollPendingY !== null) {
+      /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
+         ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
+         window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
+         (elastic bounce)、一瞬ヘッダーが乱れて見える一因になりうるため */
+      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const minOffset = tlScrollStartScrollY - freshMaxY;
+      const maxOffset = tlScrollStartScrollY;
+      const rawOffset = tlScrollPendingY - tlScrollStartY;
+      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, tlScrollStartScrollY - offset);
+    }
+    wrap.style.transform = "";
+  }
   const head = document.getElementById("timeline-head");
   if (head) head.style.transform = "";
+  tlScrollPendingY = null;
 }
 
 /* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
