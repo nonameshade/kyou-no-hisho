@@ -317,10 +317,6 @@ body[data-view="plan"] .wrap { max-width: 760px; }
   background: var(--bg);
   z-index: 10;
   padding: 6px 0;
-  /* スワイプ中、.wrapのtransformの影響を打ち消すtransformを毎フレーム
-     書き換えるため、GPUの合成レイヤーが不安定になり速いスワイプ時に
-     一瞬消えて見えることがある。常に専用レイヤーに固定しておく */
-  will-change: transform;
 }
 
 .g-row, .p-row {

@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v65"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v66"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -220,8 +220,13 @@ function nextTodayAsg() {
 }
 
 /* タイムラインのカード強調(緑)用。閲覧中の日付(viewDate)が本当の今日と
-   一致している時だけ有効(過去日・未来日のタイムラインでは強調しない) */
+   一致している時だけ「次にやること」まで含めて有効(過去日・未来日の
+   タイムラインでは強調しない)。ただし、日をまたいで計測中のタスクが
+   閲覧中の日付(=そのタスク本来の日付)のものであれば、今日でなくても
+   常に優先して強調する */
 function currentAsg() {
+  const run = runningAsg();
+  if (run && run.date === viewDate) return run;
   if (viewDate !== todayKey()) return null;
   return nextTodayAsg();
 }
@@ -2907,7 +2912,9 @@ function updateRunningCardTime() {
   const run = runningAsg();
   if (!run) return;
   const el = document.querySelector(`.t-item[data-asg="${run.id}"] .t-est`);
-  if (el) el.textContent = `${fmtDur(elapsedSec(run))} / ${fmtDur(run.estimateMin * 60)}`;
+  /* textContentで置き換えると中の「作業中」タグ(span)まで消えてしまうため、
+     renderTimeline()と同じ内容をinnerHTMLで作り直す */
+  if (el) el.innerHTML = `${fmtDur(elapsedSec(run))} / ${fmtDur(run.estimateMin * 60)} <span class="t-running-tag">作業中</span>`;
 }
 
 /* ---------- イベント ---------- */
