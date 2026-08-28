@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v61"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v62"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -203,8 +203,10 @@ const elapsedSec = (a) =>
 
 const isOver = (a) => elapsedSec(a) > a.estimateMin * 60;
 
-function currentAsg() {
-  if (viewDate !== todayKey()) return null;
+/* 「実際の今日」における次にやること/作業中を返す。viewDate(閲覧中の日付)には
+   依存しない(過去日・未来日を見ていてもヘッダーのタイマーバナーは常に
+   本当の今日を基準に表示するため) */
+function nextTodayAsg() {
   const list = dayList(todayKey());
   const run = runningAsg();
   if (run) return run;
@@ -215,6 +217,13 @@ function currentAsg() {
     return started.find((a) => hmToMin(a.start) === latest);
   }
   return list.find((a) => a.status !== "done") || null;
+}
+
+/* タイムラインのカード強調(緑)用。閲覧中の日付(viewDate)が本当の今日と
+   一致している時だけ有効(過去日・未来日のタイムラインでは強調しない) */
+function currentAsg() {
+  if (viewDate !== todayKey()) return null;
+  return nextTodayAsg();
 }
 
 /* ---------- 周期タスク ---------- */
@@ -757,7 +766,7 @@ function renderTimeline() {
             <div class="t-main">
               ${crumb ? `<div class="t-crumb">${esc(crumb)} ›</div>` : ""}
               <div class="t-name">${esc(asgTitle(a))}</div>
-              <div class="t-est">${fmtDur(elapsedSec(a))} / ${fmtDur(a.estimateMin * 60)}</div>
+              <div class="t-est">${fmtDur(elapsedSec(a))} / ${fmtDur(a.estimateMin * 60)}${running ? ` <span class="t-running-tag">作業中</span>` : ""}</div>
             </div>
             <div class="t-actions">${actions}</div>
           </div>
@@ -1174,8 +1183,23 @@ document.addEventListener("pointerdown", () => {
    その際pointerupを送らずpointercancelだけを送ってくることがある。
    これを無視するとtlScrollFallback等の状態が中途半端なまま残り、
    以後の操作と噛み合わなくなる(スワイプが長いと振動する不具合の一因) */
+/* ドラッグにも長押し待ち中のスワイプ判定にも至らなかった場合、単純な
+   タップとみなして開始/停止を確実に実行する。ブラウザのネイティブclick
+   イベントに頼ると、touch-action:noneとの組み合わせ等で発火しない端末が
+   ありうるため、ここで明示的に実行する(直後のclickはsuppressClickで無視) */
+function tlHandleTap(item) {
+  const card = item.querySelector(".t-card");
+  const action = card ? card.dataset.action : null;
+  const id = card ? card.dataset.id : null;
+  if (action === "start") startAsg(id);
+  else if (action === "pause") pauseAsg(id);
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 80);
+}
+
 function tlPointerEnd() {
   clearTimeout(tlLongPressTimer);
+  const tappedItem = tlPending ? tlPending.item : null;
   tlPending = null;
   if (tlScrollFallback) {
     if (tlScrollRAF) { cancelAnimationFrame(tlScrollRAF); tlScrollRAF = null; }
@@ -1197,7 +1221,10 @@ function tlPointerEnd() {
     }
     setTimeout(() => { suppressClick = false; }, 80);
   }
-  if (!tlDrag) return;
+  if (!tlDrag) {
+    if (tappedItem) tlHandleTap(tappedItem);
+    return;
+  }
   const d = tlDrag;
   tlDrag = null;
   tlStopAutoScroll();
@@ -2721,7 +2748,8 @@ async function forceUpdate() {
 
 /* ---------- ミニタイマー(タイマーが見えないときの上部バナー) ---------- */
 /* コンパクトなタイマーバナー(旧ヒーローカードを統合)。作業中/次にやることは
-   タブに関わらず常にヘッダーに固定表示する(今日タブの表示日が今日の時のみ) */
+   タブや閲覧中の日付(viewDate)に関わらず、常に「本当の今日」を基準にして
+   ヘッダーに固定表示する(過去日・未来日を見ていても表示し続ける) */
 function updateMiniTimer() {
   const bar = document.getElementById("mini-timer");
   const warnBtn = document.getElementById("mt-warn");
@@ -2729,8 +2757,7 @@ function updateMiniTimer() {
   const toggleBtn = document.getElementById("mt-toggle");
   if (!bar || !warnBtn || !textEl || !toggleBtn) return;
   const run = runningAsg();
-  const onToday = viewDate === todayKey();
-  const cur = run || (onToday ? currentAsg() : null);
+  const cur = run || nextTodayAsg();
   const mine = !!(run && cur && run.id === cur.id);
   const over = !!cur && isOver(cur); // 停止中(未着手・一時停止)でも超過していれば赤くする
   const show = !!cur;

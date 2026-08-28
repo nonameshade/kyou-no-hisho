@@ -169,6 +169,16 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
 .t-name { font-size: 14.5px; font-weight: 600; line-height: 1.35; }
 .t-item.done .t-name { text-decoration: line-through; }
 .t-est { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.t-running-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-left: 2px;
+}
 .t-sub { font-size: 11.5px; color: var(--muted); }
 .t-card[data-action] { cursor: pointer; }
 .t-card[data-action]:active { filter: brightness(0.97); }
@@ -306,6 +316,10 @@ body[data-view="plan"] .wrap { max-width: 760px; }
   background: var(--bg);
   z-index: 10;
   padding: 6px 0;
+  /* スワイプ中、.wrapのtransformの影響を打ち消すtransformを毎フレーム
+     書き換えるため、GPUの合成レイヤーが不安定になり速いスワイプ時に
+     一瞬消えて見えることがある。常に専用レイヤーに固定しておく */
+  will-change: transform;
 }
 
 .g-row, .p-row {
