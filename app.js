@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v76"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v77"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1132,12 +1132,18 @@ const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
 /* スワイプ/慣性スクロールを終える。transformで見た目だけ動かしていた状態から、
    実際のスクロール位置を一度だけ確定し、transformを解除する。
-   (transformの解除を実スクロール確定より遅らせる案を試したが、実スクロール
-   移動分と残っている見せかけのtransform移動分が二重に足し算されて画面
-   全体がずれてしまったため、両方を同時に確定・解除する方式に戻した) */
+   画面録画で確認したところ、window.scrollTo直後は「スクロールバーが描画
+   →少し遅れてヘッダーが描画」という順序になっており、ブラウザが実際に
+   新しいスクロール位置へネイティブのsticky計算を追従させるまで数フレーム
+   かかっていることが分かった(この間ヘッダーが消えて見える)。
+   .wrapは即座に解除しても実測ではずれが出ないため即時解除するが、
+   ヘッダーだけは「本来あるべき位置」と「今実際に描画されている位置」を
+   測定し、その差分をtransformで一時的に補って橋渡しし、ネイティブが
+   追従したと見なせる頃合いで橋渡し分を解除する */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
   const wrap = document.querySelector(".wrap");
+  let finalOffset = null;
   if (wrap) {
     if (tlScrollPendingY !== null) {
       /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
@@ -1148,13 +1154,26 @@ function tlFinalizeScrollFallback() {
       const minOffset = tlScrollStartScrollY - freshMaxY;
       const maxOffset = tlScrollStartScrollY;
       const rawOffset = tlScrollPendingY - tlScrollStartY;
-      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-      window.scrollTo(0, tlScrollStartScrollY - offset);
+      finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, tlScrollStartScrollY - finalOffset);
     }
     wrap.style.transform = "";
   }
   const head = document.getElementById("timeline-head");
-  if (head) head.style.transform = "";
+  if (head) {
+    if (finalOffset !== null) {
+      const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
+      head.style.transform = ""; // 一旦ネイティブに委ねて、その結果を実測する
+      const actualTop = head.getBoundingClientRect().top;
+      const bridge = desired - actualTop; // ネイティブが追従できていない分だけ差が出る(追従済みなら0)
+      head.style.transform = bridge ? `translateY(${bridge}px)` : "";
+    } else {
+      head.style.transform = "";
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!tlScrollFallback) head.style.transform = ""; // その間に次のスワイプが始まっていなければ橋渡し分を解除
+    }));
+  }
   tlScrollPendingY = null;
 }
 
