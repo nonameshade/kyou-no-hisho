@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v63"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v64"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -590,8 +590,12 @@ function switchView(v) {
   document.getElementById("view-today").classList.toggle("hidden", v !== "today");
   document.getElementById("view-gantt").classList.toggle("hidden", v !== "gantt");
   document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
+  /* #fixedbars(タイマーバナーの表示/非表示で高さが変わりうる)の高さを
+     確定させてからrenderAll()を呼ぶ。順序が逆だと、計画タブのガント見出しの
+     固定位置(#fixedbarsの高さを基準に計算)が古い高さで計算されてしまい、
+     直後のスクロールで正しい位置へ動いて見える不具合になる */
+  updateMiniTimer();
   renderAll();
-  updateMiniTimer(); // タブ切り替え直後もヘッダーのタイマー表示を即座に反映する
 }
 
 /* ---------- 描画:共通ヘッダー ---------- */
@@ -1290,6 +1294,19 @@ function renderDayClose() {
 
 /* ---------- 描画:統合ガント(計画モード) ---------- *//* ---------- 描画:統合ガント(計画モード) ---------- */
 let showArch = localStorage.getItem("hisho:ui:showarch") === "1";
+let selDayOnly = localStorage.getItem("hisho:ui:seldayonly") === "1";
+
+/* タスクtが日付dkに関係する(実施日・予備日・周期の自動予定・自動予備日の
+   いずれかがある)かどうか。「選択日のタスクのみ表示」の絞り込みに使う。
+   summary(見出し)行は絞り込みの対象外として常に表示する */
+function taskRelevantToDate(t, dk) {
+  if (t.type === "summary") return true;
+  if (state.assignments.some((a) => a.taskId === t.id && a.date === dk)) return true;
+  if (findReserve(t.id, dk)) return true;
+  if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk) && !hasSkip(t.id, dk)) return true;
+  if (ruleReserveDates(t, dk, dk).has(dk)) return true;
+  return false;
+}
 let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
 function saveOpenIssues() {
   localStorage.setItem("hisho:ui:openissues", JSON.stringify([...openIssueIds]));
@@ -1312,6 +1329,8 @@ function renderGantt() {
   const box = document.getElementById("gantt");
   const archChk = document.getElementById("g-showarch");
   if (archChk) archChk.checked = showArch;
+  const seldayChk = document.getElementById("g-selday-only");
+  if (seldayChk) seldayChk.checked = selDayOnly;
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
@@ -1378,7 +1397,9 @@ function renderGantt() {
   const walk = (parentId, depth) => {
     (parentId === null ? orderedRoots() : state.tasks.filter((t) => t.parentId === parentId))
       .forEach((t) => {
-        const hideThis = !showArch && isTaskArchived(t); // アーカイブのみ非表示(完了でも未アーカイブなら表示)
+        const hideThis =
+          (!showArch && isTaskArchived(t)) || // アーカイブのみ非表示(完了でも未アーカイブなら表示)
+          (selDayOnly && !taskRelevantToDate(t, selDate)); // 選択日のタスクのみ表示
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
@@ -1490,7 +1511,8 @@ function updateGanttStickyHeader() {
   const headSide = box.querySelector(".g-side .g-scell.g-sh");
   if (!headTrack || !headSide) return;
   const bars = document.getElementById("fixedbars");
-  const topEdge = bars ? bars.offsetHeight : 0;
+  const nav = document.querySelector(".cal-sticky");
+  const topEdge = (bars ? bars.offsetHeight : 0) + (nav ? nav.offsetHeight : 0);
   const rect = box.getBoundingClientRect();
   const headH = headTrack.offsetHeight;
   let offset = 0;
@@ -3197,6 +3219,11 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "g-showarch") {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
+    renderGantt();
+  }
+  if (e.target.id === "g-selday-only") {
+    selDayOnly = e.target.checked;
+    localStorage.setItem("hisho:ui:seldayonly", selDayOnly ? "1" : "0");
     renderGantt();
   }
   if (e.target.id === "a-task") {

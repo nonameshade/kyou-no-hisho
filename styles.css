@@ -385,9 +385,22 @@ select {
 body[data-view="cal"] .wrap { max-width: 760px; }
 body[data-view="cal"] #fab { display: none; }
 
+/* 表示範囲の選択ボタン・アーカイブ表示・選択日のみ表示は、ガントの
+   日付見出し行(#gantt内、JSで別途固定表示)と合わせてヘッダー直下に固定する */
+.cal-sticky {
+  position: sticky;
+  top: var(--fixed-h, 0px);
+  z-index: 6;
+  background: var(--bg);
+}
 .cal-nav {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.cal-nav2 {
+  display: flex;
   align-items: center;
   margin-bottom: 10px;
 }

@@ -86,12 +86,17 @@
 
     <!-- ============ ガント(計画モード) ============ -->
     <div id="view-gantt" class="hidden">
-      <div class="cal-nav">
-        <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
-        <button class="sbtn" data-action="g-today">今日へ</button>
-        <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
-        <label class="chk"><input type="checkbox" id="g-showarch">アーカイブを表示</label>
-        <button class="ibtn" data-action="g-help" aria-label="操作方法">i</button>
+      <div class="cal-sticky">
+        <div class="cal-nav">
+          <button class="sbtn muted" data-action="g-prev">◀ 2週間</button>
+          <button class="sbtn" data-action="g-today">今日へ</button>
+          <button class="sbtn muted" data-action="g-next">2週間 ▶</button>
+          <label class="chk"><input type="checkbox" id="g-showarch">アーカイブを表示</label>
+          <button class="ibtn" data-action="g-help" aria-label="操作方法">i</button>
+        </div>
+        <div class="cal-nav2">
+          <label class="chk"><input type="checkbox" id="g-selday-only">選択日のタスクのみ表示</label>
+        </div>
       </div>
       <div id="gantt"></div>
 
