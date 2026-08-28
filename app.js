@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v68"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v69"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1132,7 +1132,15 @@ function tlFinalizeScrollFallback() {
   const wrap = document.querySelector(".wrap");
   if (wrap) {
     if (tlScrollPendingY !== null) {
-      const offset = tlClampScrollOffset(tlScrollPendingY - tlScrollStartY);
+      /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
+         ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
+         window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
+         (elastic bounce)、一瞬ヘッダーが乱れて見える一因になりうるため */
+      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const minOffset = tlScrollStartScrollY - freshMaxY;
+      const maxOffset = tlScrollStartScrollY;
+      const rawOffset = tlScrollPendingY - tlScrollStartY;
+      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
       window.scrollTo(0, tlScrollStartScrollY - offset);
     }
     wrap.style.transform = "";

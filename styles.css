@@ -316,12 +316,6 @@ body[data-view="plan"] .wrap { max-width: 760px; }
   background: var(--bg);
   z-index: 10;
   padding: 6px 0;
-  /* スワイプ中、.wrapのtransformの影響を打ち消すtransformを毎フレーム
-     書き換えるため、GPUの合成レイヤーが不安定になり速いスワイプ時に
-     一瞬消えて見えることがある。常に専用レイヤーに固定しておく。
-     (以前これを追加した際はoverflow-x:hiddenとの組み合わせでsticky自体が
-     壊れる問題が別途あったが、その原因は特定・解消済み) */
-  will-change: transform;
 }
 
 .g-row, .p-row {
