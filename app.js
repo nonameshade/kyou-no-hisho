@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v73"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v75"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -853,7 +853,6 @@ let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール�
 let tlHeadStickyTop = 0; // #timeline-headのsticky吸着位置(--fixed-hを解決した実際のpx値)
 let tlHeadNaturalK = 0; // #timeline-headの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
 let tlHeadBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置(吸着中ならtlHeadStickyTopと同じ)
-let tlHeadFrameCount = 0; // フォールバック開始からの累積フレーム数(下スワイプ直後のちらつき対策で最初の数フレームはヘッダーの反映を遅らせる)
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlScrollVelSamples = []; // 慣性スクロール用、直近の指位置サンプル { t, y }
@@ -1066,16 +1065,9 @@ function tlApplyScrollFallback() {
      #fab(タスクを追加ボタン)は.wrapの外に配置しているので影響を受けない */
   const head = document.getElementById("timeline-head");
   if (head) {
-    tlHeadFrameCount++;
-    /* スワイプ確定直後の数フレームはヘッダーへの反映をあえて遅らせる。
-       いきなり下向きに動き出す瞬間に一瞬ちらつく不具合の対策として、
-       上→下と切り返した時(自然に助走がつく)は起きないという報告から、
-       同じような"助走"を人工的に作って試している(実験的な対策) */
-    if (tlHeadFrameCount > 2) {
-      const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
-      const headCounter = desired - tlHeadBaseRendered - offset;
-      head.style.transform = `translateY(${headCounter}px)`;
-    }
+    const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + offset);
+    const headCounter = desired - tlHeadBaseRendered - offset;
+    head.style.transform = `translateY(${headCounter}px)`;
   }
 }
 
@@ -1121,7 +1113,6 @@ document.addEventListener("pointermove", (e) => {
            既に吸着中ならtlHeadStickyTop、していなければtlHeadNaturalKに一致する */
         tlHeadBaseRendered = Math.max(tlHeadStickyTop, tlHeadNaturalK);
       }
-      tlHeadFrameCount = 0;
       /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
          発火してしまい、タイマー開始/停止が誤爆するため抑制する */
       suppressClick = true;
@@ -1139,29 +1130,41 @@ const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールし
 const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
-/* スワイプ/慣性スクロールを終える。transformで見た目だけ動かしていた状態から、
-   実際のスクロール位置を一度だけ確定し、transformを解除する */
+/* スワイプ/慣性スクロールを終える。実際のスクロール位置を一度だけ確定する。
+   transformで見た目だけ動かしていた状態(.wrap/#timeline-head)は、この時点
+   ではまだ解除しない。scrollTo直後はブラウザがまだ新しいスクロール位置に
+   追従しきっていないことがあり、その瞬間にtransformも同時に消すと
+   ネイティブのsticky描画へ切り替わる一瞬が乱れて見えることがあった
+   (ちらつきの原因の可能性)。見せかけの表示は最後の状態のまま数フレーム
+   維持し(この間は見た目が一切変化しない)、ブラウザが追従したと見なせる
+   頃合いでtlClearScrollFallbackTransformsがまとめて解除する */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
-  const wrap = document.querySelector(".wrap");
-  if (wrap) {
-    if (tlScrollPendingY !== null) {
-      /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
-         ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
-         window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
-         (elastic bounce)、一瞬ヘッダーが乱れて見える一因になりうるため */
-      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-      const minOffset = tlScrollStartScrollY - freshMaxY;
-      const maxOffset = tlScrollStartScrollY;
-      const rawOffset = tlScrollPendingY - tlScrollStartY;
-      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-      window.scrollTo(0, tlScrollStartScrollY - offset);
-    }
-    wrap.style.transform = "";
+  if (tlScrollPendingY !== null) {
+    /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
+       ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
+       window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
+       (elastic bounce)、一瞬ヘッダーが乱れて見える一因になりうるため */
+    const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const minOffset = tlScrollStartScrollY - freshMaxY;
+    const maxOffset = tlScrollStartScrollY;
+    const rawOffset = tlScrollPendingY - tlScrollStartY;
+    const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+    window.scrollTo(0, tlScrollStartScrollY - offset);
   }
+  tlScrollPendingY = null;
+  requestAnimationFrame(() => requestAnimationFrame(tlClearScrollFallbackTransforms));
+}
+
+/* tlFinalizeScrollFallbackの数フレーム後に呼ばれ、.wrap/#timeline-headの
+   transformをまとめて解除する。その間に新しいスワイプが始まっていたら
+   (tlScrollFallbackが再びtrueになっていたら)何もしない */
+function tlClearScrollFallbackTransforms() {
+  if (tlScrollFallback) return;
+  const wrap = document.querySelector(".wrap");
+  if (wrap) wrap.style.transform = "";
   const head = document.getElementById("timeline-head");
   if (head) head.style.transform = "";
-  tlScrollPendingY = null;
 }
 
 /* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
