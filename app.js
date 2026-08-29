@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v84"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v85"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1113,6 +1113,8 @@ document.addEventListener("pointermove", (e) => {
           head.style.left = "";
           head.style.width = "";
           head.style.top = "";
+          const spacer = document.getElementById("timeline-head-spacer");
+          if (spacer) spacer.style.height = "0px";
         }
         tlHeadStickyTop = parseFloat(getComputedStyle(head).top) || 0;
         const prevPosition = head.style.position;
@@ -1184,6 +1186,11 @@ function tlFinalizeScrollFallback() {
   head.style.left = `${rect.left}px`;
   head.style.width = `${rect.width}px`;
   head.style.top = `${desired}px`;
+  /* position:fixedにすると通常のドキュメントフローから外れ、それまでheadが
+     占めていた分の高さが消えて後続要素が一瞬詰まって見える(そして解除時に
+     また戻る)。spacerでその高さぶんを確保しておく */
+  const spacer = document.getElementById("timeline-head-spacer");
+  if (spacer) spacer.style.height = `${rect.height}px`;
   /* このsettleの世代を記録しておき、releaseが実際に発火する時点で世代が
      ずれていたら(=その後さらに新しいジェスチャーが始まっていたら)何もしない。
      tlScrollFallbackだけを見ると、後発ジェスチャーが既に終わってさらに次の
@@ -1196,6 +1203,7 @@ function tlFinalizeScrollFallback() {
     head.style.left = "";
     head.style.width = "";
     head.style.top = "";
+    if (spacer) spacer.style.height = "0px";
   };
   if ("onscrollend" in window) {
     window.addEventListener("scrollend", release, { once: true });
