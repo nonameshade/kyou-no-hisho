@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v80"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v81"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1130,13 +1130,14 @@ const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールし
 const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
-/* スワイプ/慣性スクロールを終える。transformで見た目だけ動かしていた状態から、
-   実際のスクロール位置を一度だけ確定し、transformを解除する。
-   (確定処理を80ms遅らせる案も試したが効果がなかったため、即時に確定する
-   元の方式に戻した) */
+/* スワイプ/慣性スクロールを終える。.wrapは実測でもずれが出ないため即座に
+   transformを解除するが、#timeline-head(ネイティブsticky)はスクロール
+   位置の反映に数フレーム遅れることがあるため、tlBridgeHeadUntilSettledで
+   実際に正しい位置になったことを毎フレーム確認してから解除する */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
   const wrap = document.querySelector(".wrap");
+  let finalOffset = null;
   if (wrap) {
     if (tlScrollPendingY !== null) {
       /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
@@ -1147,14 +1148,32 @@ function tlFinalizeScrollFallback() {
       const minOffset = tlScrollStartScrollY - freshMaxY;
       const maxOffset = tlScrollStartScrollY;
       const rawOffset = tlScrollPendingY - tlScrollStartY;
-      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-      window.scrollTo(0, tlScrollStartScrollY - offset);
+      finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, tlScrollStartScrollY - finalOffset);
     }
     wrap.style.transform = "";
   }
-  const head = document.getElementById("timeline-head");
-  if (head) head.style.transform = "";
   tlScrollPendingY = null;
+  const head = document.getElementById("timeline-head");
+  if (!head) return;
+  if (finalOffset === null) { head.style.transform = ""; return; }
+  tlBridgeHeadUntilSettled(head, finalOffset, 20);
+}
+
+/* #timeline-headの「本来あるべき位置」と「今実際にネイティブが描画している
+   位置」を毎フレーム測定する。両者が一致するまで(=ネイティブのsticky計算が
+   新しいスクロール位置に追従し終えるまで)は差分をtransformで補い続け、
+   見た目が常に正しい位置になるようにする。一致したら初めてtransformを
+   解除し、以降は完全にネイティブへ委ねる。framesLeftは念のための上限 */
+function tlBridgeHeadUntilSettled(head, finalOffset, framesLeft) {
+  if (tlScrollFallback) return; // 待っている間に次のスワイプが始まっていたら何もしない
+  head.style.transform = ""; // 一旦ネイティブに委ねて、その結果を実測する
+  const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
+  const actualTop = head.getBoundingClientRect().top;
+  const bridge = desired - actualTop;
+  if (Math.abs(bridge) < 0.5 || framesLeft <= 0) return; // 追従し終えた(またはタイムアウト): ネイティブのままにする
+  head.style.transform = `translateY(${bridge}px)`;
+  requestAnimationFrame(() => tlBridgeHeadUntilSettled(head, finalOffset, framesLeft - 1));
 }
 
 /* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
