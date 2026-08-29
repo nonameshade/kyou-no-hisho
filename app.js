@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v77"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v79"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1130,22 +1130,28 @@ const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールし
 const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
-/* スワイプ/慣性スクロールを終える。transformで見た目だけ動かしていた状態から、
-   実際のスクロール位置を一度だけ確定し、transformを解除する。
-   画面録画で確認したところ、window.scrollTo直後は「スクロールバーが描画
-   →少し遅れてヘッダーが描画」という順序になっており、ブラウザが実際に
-   新しいスクロール位置へネイティブのsticky計算を追従させるまで数フレーム
-   かかっていることが分かった(この間ヘッダーが消えて見える)。
-   .wrapは即座に解除しても実測ではずれが出ないため即時解除するが、
-   ヘッダーだけは「本来あるべき位置」と「今実際に描画されている位置」を
-   測定し、その差分をtransformで一時的に補って橋渡しし、ネイティブが
-   追従したと見なせる頃合いで橋渡し分を解除する */
+/* スワイプ/慣性スクロールを終える。指を離した直後はタッチ操作の余韻が
+   残っており、この状態でwindow.scrollToを呼ぶとiOS Safariが瞬時の
+   ジャンプではなく指でスクロールした時と同じ慣性・収束アニメーションの
+   経路で処理し、実際に画面へ反映されるまで数フレームかかることがある
+   (この間ネイティブのstickyが古い位置のまま描画され、ちらつく一因に
+   なっていた可能性がある)。そこで実際の確定処理は少し間を置いてから
+   行う。間を置く間は見た目のtransformを一切変えない(直前の状態のまま
+   なので見た目上の変化はない) */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
+  const pendingY = tlScrollPendingY;
+  tlScrollPendingY = null;
+  setTimeout(() => tlCommitScrollFallback(pendingY), 80);
+}
+
+/* tlFinalizeScrollFallbackから少し遅れて呼ばれ、実際のスクロール位置の
+   確定とtransformの解除をまとめて行う */
+function tlCommitScrollFallback(pendingY) {
+  if (tlScrollFallback) return; // 待っている間に次のスワイプが始まっていたら何もしない
   const wrap = document.querySelector(".wrap");
-  let finalOffset = null;
   if (wrap) {
-    if (tlScrollPendingY !== null) {
+    if (pendingY !== null) {
       /* 確定時だけは、キャッシュ済みのtlScrollMaxY(ジェスチャー開始時点の値)
          ではなく今の実際の最大スクロール量で上限を取り直す。ずれたまま
          window.scrollToに渡すと、ブラウザ側で範囲外とみなされて弾かれ
@@ -1153,28 +1159,14 @@ function tlFinalizeScrollFallback() {
       const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       const minOffset = tlScrollStartScrollY - freshMaxY;
       const maxOffset = tlScrollStartScrollY;
-      const rawOffset = tlScrollPendingY - tlScrollStartY;
-      finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-      window.scrollTo(0, tlScrollStartScrollY - finalOffset);
+      const rawOffset = pendingY - tlScrollStartY;
+      const offset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, tlScrollStartScrollY - offset);
     }
     wrap.style.transform = "";
   }
   const head = document.getElementById("timeline-head");
-  if (head) {
-    if (finalOffset !== null) {
-      const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
-      head.style.transform = ""; // 一旦ネイティブに委ねて、その結果を実測する
-      const actualTop = head.getBoundingClientRect().top;
-      const bridge = desired - actualTop; // ネイティブが追従できていない分だけ差が出る(追従済みなら0)
-      head.style.transform = bridge ? `translateY(${bridge}px)` : "";
-    } else {
-      head.style.transform = "";
-    }
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!tlScrollFallback) head.style.transform = ""; // その間に次のスワイプが始まっていなければ橋渡し分を解除
-    }));
-  }
-  tlScrollPendingY = null;
+  if (head) head.style.transform = "";
 }
 
 /* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
