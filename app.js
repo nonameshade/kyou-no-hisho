@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v86"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v87"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -601,6 +601,7 @@ function switchView(v) {
      直後のスクロールで正しい位置へ動いて見える不具合になる */
   updateMiniTimer();
   renderAll();
+  if (v === "gantt") startGanttStickyLoop();
 }
 
 /* ---------- 描画:共通ヘッダー ---------- */
@@ -1591,7 +1592,11 @@ function updateGanttStickyHeader() {
   if (!headTrack || !headSide) return;
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
-  const topEdge = (bars ? bars.offsetHeight : 0) + (nav ? nav.offsetHeight : 0);
+  /* topEdge = navが実際に貼り付く位置(getComputedStyleで.cal-stickyのtop、
+     つまりvar(--fixed-h)+16px+safe-areaを解決したpx値) + navの実高さ。
+     navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
+  const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
+  const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
   const rect = box.getBoundingClientRect();
   const headH = headTrack.offsetHeight;
   let offset = 0;
@@ -1608,6 +1613,23 @@ function updateGanttStickyHeader() {
 window.addEventListener("scroll", () => {
   requestAnimationFrame(updateGanttStickyHeader);
 }, { passive: true });
+
+/* scrollイベントだけに頼ると、iOSの慣性スクロール中はイベント発火が実際の
+   描画に対して遅延/まとめ打ちされることがあり、見出し行が本来の位置を
+   一瞬追い越してから遅れて補正される(ちらつき/ジャンプに見える)ことが
+   あった。計画タブを表示している間は毎フレーム無条件に位置を再計算する
+   ことで、scrollイベントのタイミングに依存しないようにする */
+let ganttStickyLoopActive = false;
+function ganttStickyLoop() {
+  if (view !== "gantt") { ganttStickyLoopActive = false; return; }
+  updateGanttStickyHeader();
+  requestAnimationFrame(ganttStickyLoop);
+}
+function startGanttStickyLoop() {
+  if (ganttStickyLoopActive) return;
+  ganttStickyLoopActive = true;
+  requestAnimationFrame(ganttStickyLoop);
+}
 
 /* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
