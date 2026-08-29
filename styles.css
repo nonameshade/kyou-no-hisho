@@ -391,18 +391,25 @@ body[data-view="cal"] #fab { display: none; }
 
 /* 表示範囲の選択ボタン・アーカイブ表示・選択日のみ表示は、ガントの
    日付見出し行(#gantt内、JSで別途固定表示)と合わせてヘッダー直下に固定する。
-   topは.wrapのpadding-top(calc(16px + safe-area))と同じ値を足し、固定される
-   前後で範囲選択ボタン上の余白が変わらないようにする。
+   topをずらして余白を作ると、固定中はその余白部分がこの要素の不透明な
+   背景でカバーされなくなり、下からスクロールしてきたガントの行が
+   突き抜けて見えてしまう。そこでtopは.wrap直下ぴったり(var(--fixed-h))の
+   ままにし、代わりに.wrapのpadding-top分をmargin-topの負値で打ち消してから
+   同じ量をpadding-topとして自分の内側に持たせる。これにより不透明な背景の
+   開始位置は常にヘッダー直下(隙間なし)のまま、余白は固定・非固定を問わず
+   常にこの要素の内側で一定に保たれる。
    display:flow-rootは、最後の子要素(.cal-nav2)のmargin-bottomがこの要素の
    外へ「はみ出して」collapseし、offsetHeight(JS側の位置計算に使用)が
    実際の見た目の高さより小さく計算されてしまう(結果、ガント見出し行との
    間隔が詰まって見える)のを防ぐため */
 .cal-sticky {
   position: sticky;
-  top: calc(var(--fixed-h, 0px) + 16px + env(safe-area-inset-top));
+  top: var(--fixed-h, 0px);
   z-index: 6;
   background: var(--bg);
   display: flow-root;
+  margin-top: calc(-16px - env(safe-area-inset-top));
+  padding-top: calc(16px + env(safe-area-inset-top));
 }
 .cal-nav {
   display: flex;

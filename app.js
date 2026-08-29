@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v87"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v88"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1578,9 +1578,34 @@ function renderGantt() {
     if (keepLeft !== null) sc.scrollLeft = keepLeft;
     else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
   }
+  measureGanttSticky();
   updateGanttStickyHeader();
   renderDayDetail();
 }
+
+/* #gantt本体の文書上の位置と日付ヘッダー行の高さは、レイアウトが変わらない
+   限り毎フレーム測り直す必要がない。getBoundingClientRect()/offsetHeightは
+   呼ぶたびに同期的なレイアウト計算を強制するため、rAFループの中で毎回
+   呼ぶとメインスレッドの処理が重くなり、iOSの慣性スクロール中に読み取る
+   スクロール位置が実際の描画から遅れる一因になっていた可能性がある。
+   そこで測定はレイアウトが変わりうるタイミング(再描画・リサイズ)だけで
+   行い、毎フレームの処理はwindow.scrollYを使った軽い算術計算だけにする */
+let ganttBoxDocTop = 0;
+let ganttBoxDocHeight = 0;
+let ganttHeadHeight = 0;
+function measureGanttSticky() {
+  const box = document.getElementById("gantt");
+  if (!box) return;
+  const headTrack = box.querySelector(".g-trow.g-sh");
+  const r = box.getBoundingClientRect();
+  ganttBoxDocTop = r.top + window.scrollY;
+  ganttBoxDocHeight = r.height;
+  ganttHeadHeight = headTrack ? headTrack.offsetHeight : 0;
+}
+window.addEventListener("resize", () => {
+  measureGanttSticky();
+  updateGanttStickyHeader();
+});
 
 /* 縦スクロール時、日付ヘッダー行を画面上部に貼り付ける */
 function updateGanttStickyHeader() {
@@ -1593,15 +1618,16 @@ function updateGanttStickyHeader() {
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
   /* topEdge = navが実際に貼り付く位置(getComputedStyleで.cal-stickyのtop、
-     つまりvar(--fixed-h)+16px+safe-areaを解決したpx値) + navの実高さ。
+     つまりvar(--fixed-h)を解決したpx値) + navの実高さ。
      navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
   const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
-  const rect = box.getBoundingClientRect();
-  const headH = headTrack.offsetHeight;
+  const scrollY = window.scrollY;
+  const rectTop = ganttBoxDocTop - scrollY;
+  const rectBottom = rectTop + ganttBoxDocHeight;
   let offset = 0;
-  if (rect.top < topEdge && rect.bottom > topEdge + headH + 40) {
-    offset = topEdge - rect.top;
+  if (rectTop < topEdge && rectBottom > topEdge + ganttHeadHeight + 40) {
+    offset = topEdge - rectTop;
   }
   const tf = offset > 0 ? `translateY(${offset}px)` : "";
   headTrack.style.transform = tf;
