@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v85"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v86"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1180,6 +1180,9 @@ function tlFinalizeScrollFallback() {
      うちに現在の描画矩形を測っておく。translateYは横位置・幅に影響しない
      ため、left/widthはそのまま正しい値として使える */
   const rect = head.getBoundingClientRect();
+  /* getBoundingClientRectはmargin分を含まない。.plan-headにはmargin-bottomが
+     指定されているため、spacerの高さにはそれも足し込まないと数px分ずれる */
+  const marginBottom = parseFloat(getComputedStyle(head).marginBottom) || 0;
   const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
   head.style.transform = "";
   head.style.position = "fixed";
@@ -1187,10 +1190,10 @@ function tlFinalizeScrollFallback() {
   head.style.width = `${rect.width}px`;
   head.style.top = `${desired}px`;
   /* position:fixedにすると通常のドキュメントフローから外れ、それまでheadが
-     占めていた分の高さが消えて後続要素が一瞬詰まって見える(そして解除時に
-     また戻る)。spacerでその高さぶんを確保しておく */
+     占めていた分の高さ(margin込み)が消えて後続要素が一瞬詰まって見える
+     (そして解除時にまた戻る)。spacerでその高さぶんを確保しておく */
   const spacer = document.getElementById("timeline-head-spacer");
-  if (spacer) spacer.style.height = `${rect.height}px`;
+  if (spacer) spacer.style.height = `${rect.height + marginBottom}px`;
   /* このsettleの世代を記録しておき、releaseが実際に発火する時点で世代が
      ずれていたら(=その後さらに新しいジェスチャーが始まっていたら)何もしない。
      tlScrollFallbackだけを見ると、後発ジェスチャーが既に終わってさらに次の
