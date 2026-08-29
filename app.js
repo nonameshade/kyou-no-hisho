@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v82"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v83"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1130,10 +1130,15 @@ const TL_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールし
 const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
-/* スワイプ/慣性スクロールを終える。.wrapは実測でもずれが出ないため即座に
-   transformを解除するが、#timeline-head(ネイティブsticky)はスクロール
-   位置の反映に数フレーム遅れることがあるため、tlBridgeHeadUntilSettledで
-   実際に正しい位置になったことを毎フレーム確認してから解除する */
+/* スワイプ/慣性スクロールを終える。.wrapは即座にtransformを解除してよいが、
+   #timeline-head(ネイティブsticky)は要注意: 以前「head.style.transform=""に
+   一旦戻して実測し、差分を補う」方式を試したところ、この「一旦ネイティブに
+   戻す」こと自体が毎フレーム小さなハンドオフを発生させちらつきの原因に
+   なっていた(ネイティブに戻した瞬間のgetBoundingClientRectは、実際に
+   画面へ合成済みであることを保証しない)。そこでheadは一切ネイティブを
+   覗き見ず、指を離した瞬間の位置をモデル計算のみで求めて維持し続け、
+   scrollend(対応環境)またはタイムアウトを待ってから一度だけtransformを
+   解除してネイティブへ完全に引き渡す */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
   const wrap = document.querySelector(".wrap");
@@ -1157,31 +1162,22 @@ function tlFinalizeScrollFallback() {
   const head = document.getElementById("timeline-head");
   if (!head) return;
   if (finalOffset === null) { head.style.transform = ""; return; }
-  tlBridgeHeadUntilSettled(head, finalOffset, 20);
-}
-
-/* #timeline-headの「本来あるべき位置」と「今実際にネイティブが描画している
-   位置」を毎フレーム測定する。両者が一致するまで(=ネイティブのsticky計算が
-   新しいスクロール位置に追従し終えるまで)は差分をtransformで補い続け、
-   見た目が常に正しい位置になるようにする。一致したら初めてtransformを
-   解除し、以降は完全にネイティブへ委ねる。framesLeftは念のための上限 */
-function tlBridgeHeadUntilSettled(head, finalOffset, framesLeft) {
-  if (tlScrollFallback) return; // 待っている間に次のスワイプが始まっていたら何もしない
-  head.style.transform = ""; // 一旦ネイティブに委ねて、その結果を実測する
+  /* ライブドラッグ中と同じ計算式で、確定したfinalOffset時点の打ち消し量を
+     一度だけ求める(ネイティブを一切覗かない)。ライブドラッグ最後のフレーム
+     と同じ値になるはずなので、ここでの見た目のジャンプは起きない */
   const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
-  const actualTop = head.getBoundingClientRect().top;
-  const bridge = desired - actualTop;
-  if (Math.abs(bridge) < 0.5 || framesLeft <= 0) {
-    /* 【診断用の暫定コード】追従できたと判定した後も、切り替えタイミングの
-       検証のためあえて10秒間は明示的にtransformを維持してから手放す */
-    head.style.transform = "translateY(0px)";
-    setTimeout(() => {
-      if (!tlScrollFallback) head.style.transform = "";
-    }, 10000);
-    return;
-  }
+  const bridge = desired - tlHeadBaseRendered - finalOffset;
   head.style.transform = `translateY(${bridge}px)`;
-  requestAnimationFrame(() => tlBridgeHeadUntilSettled(head, finalOffset, framesLeft - 1));
+  const release = () => {
+    if (tlScrollFallback) return; // 待っている間に次のスワイプが始まっていたら何もしない
+    head.style.transform = "";
+  };
+  if ("onscrollend" in window) {
+    window.addEventListener("scrollend", release, { once: true });
+    setTimeout(release, 500); // scrollendが発火しない場合(実質的なオフセット0等)の保険
+  } else {
+    setTimeout(release, 300);
+  }
 }
 
 /* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール)。
