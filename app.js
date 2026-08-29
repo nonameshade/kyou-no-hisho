@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v83"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v84"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -853,6 +853,7 @@ let tlScrollMaxY = 0; // フォールバック開始時点でのスクロール�
 let tlHeadStickyTop = 0; // #timeline-headのsticky吸着位置(--fixed-hを解決した実際のpx値)
 let tlHeadNaturalK = 0; // #timeline-headの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
 let tlHeadBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置(吸着中ならtlHeadStickyTopと同じ)
+let tlHeadSettleGen = 0; // position:fixed引き渡し待ち(settle)の世代カウンタ。前のジェスチャーのreleaseが後発ジェスチャーのfixedを誤って解除しないためのガード
 let tlScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let tlScrollRAF = null;
 let tlScrollVelSamples = []; // 慣性スクロール用、直近の指位置サンプル { t, y }
@@ -1103,6 +1104,16 @@ document.addEventListener("pointermove", (e) => {
          に切り替えて実測する(同期的に戻すため見た目のちらつきは出ない) */
       const head = document.getElementById("timeline-head");
       if (head) {
+        /* 前のジェスチャーのsettle(position:fixed引き渡し待ち)がまだ完了して
+           いない場合に備え、まずsticky管理下に戻す(このgen更新で前のreleaseは
+           世代不一致により無効化される) */
+        tlHeadSettleGen++;
+        if (head.style.position === "fixed") {
+          head.style.position = "";
+          head.style.left = "";
+          head.style.width = "";
+          head.style.top = "";
+        }
         tlHeadStickyTop = parseFloat(getComputedStyle(head).top) || 0;
         const prevPosition = head.style.position;
         head.style.position = "static";
@@ -1131,14 +1142,15 @@ const TL_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値�
 const TL_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 
 /* スワイプ/慣性スクロールを終える。.wrapは即座にtransformを解除してよいが、
-   #timeline-head(ネイティブsticky)は要注意: 以前「head.style.transform=""に
-   一旦戻して実測し、差分を補う」方式を試したところ、この「一旦ネイティブに
-   戻す」こと自体が毎フレーム小さなハンドオフを発生させちらつきの原因に
-   なっていた(ネイティブに戻した瞬間のgetBoundingClientRectは、実際に
-   画面へ合成済みであることを保証しない)。そこでheadは一切ネイティブを
-   覗き見ず、指を離した瞬間の位置をモデル計算のみで求めて維持し続け、
-   scrollend(対応環境)またはタイムアウトを待ってから一度だけtransformを
-   解除してネイティブへ完全に引き渡す */
+   #timeline-head(ネイティブsticky)は要注意: transformで打ち消す方式だと、
+   ネイティブのsticky計算自体がスクロール位置反映の途中で一時的に
+   不安定(吸着していない本来の位置で描画される等)になることがあり、
+   その不安定なネイティブの結果の上にこちらの打ち消し量を重ねても
+   正しい位置にならない(打ち消し量はネイティブが正しく吸着している前提の
+   計算のため)。そこで確定直後の短い間だけ、position:stickyへの依存を
+   断ち切ってJS管理のposition:fixedに切り替え、ネイティブの計算結果に
+   一切依存しない絶対位置で描画する。scrollend(または十分な待機)の後、
+   position:stickyへ戻す */
 function tlFinalizeScrollFallback() {
   tlScrollFallback = false;
   const wrap = document.querySelector(".wrap");
@@ -1162,15 +1174,28 @@ function tlFinalizeScrollFallback() {
   const head = document.getElementById("timeline-head");
   if (!head) return;
   if (finalOffset === null) { head.style.transform = ""; return; }
-  /* ライブドラッグ中と同じ計算式で、確定したfinalOffset時点の打ち消し量を
-     一度だけ求める(ネイティブを一切覗かない)。ライブドラッグ最後のフレーム
-     と同じ値になるはずなので、ここでの見た目のジャンプは起きない */
+  /* transformがまだ効いている(=ライブドラッグ最終フレームと同じ見た目の)
+     うちに現在の描画矩形を測っておく。translateYは横位置・幅に影響しない
+     ため、left/widthはそのまま正しい値として使える */
+  const rect = head.getBoundingClientRect();
   const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
-  const bridge = desired - tlHeadBaseRendered - finalOffset;
-  head.style.transform = `translateY(${bridge}px)`;
+  head.style.transform = "";
+  head.style.position = "fixed";
+  head.style.left = `${rect.left}px`;
+  head.style.width = `${rect.width}px`;
+  head.style.top = `${desired}px`;
+  /* このsettleの世代を記録しておき、releaseが実際に発火する時点で世代が
+     ずれていたら(=その後さらに新しいジェスチャーが始まっていたら)何もしない。
+     tlScrollFallbackだけを見ると、後発ジェスチャーが既に終わってさらに次の
+     settle待ちに入っている場合を区別できず、古いreleaseが後発のfixed位置を
+     誤って解除してしまう(一瞬ネイティブに戻って乱れる)ことがあったため */
+  const gen = ++tlHeadSettleGen;
   const release = () => {
-    if (tlScrollFallback) return; // 待っている間に次のスワイプが始まっていたら何もしない
-    head.style.transform = "";
+    if (tlScrollFallback || gen !== tlHeadSettleGen) return;
+    head.style.position = "";
+    head.style.left = "";
+    head.style.width = "";
+    head.style.top = "";
   };
   if ("onscrollend" in window) {
     window.addEventListener("scrollend", release, { once: true });
