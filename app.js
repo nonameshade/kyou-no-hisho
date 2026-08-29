@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v81"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v82"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1171,7 +1171,15 @@ function tlBridgeHeadUntilSettled(head, finalOffset, framesLeft) {
   const desired = Math.max(tlHeadStickyTop, tlHeadNaturalK + finalOffset);
   const actualTop = head.getBoundingClientRect().top;
   const bridge = desired - actualTop;
-  if (Math.abs(bridge) < 0.5 || framesLeft <= 0) return; // 追従し終えた(またはタイムアウト): ネイティブのままにする
+  if (Math.abs(bridge) < 0.5 || framesLeft <= 0) {
+    /* 【診断用の暫定コード】追従できたと判定した後も、切り替えタイミングの
+       検証のためあえて10秒間は明示的にtransformを維持してから手放す */
+    head.style.transform = "translateY(0px)";
+    setTimeout(() => {
+      if (!tlScrollFallback) head.style.transform = "";
+    }, 10000);
+    return;
+  }
   head.style.transform = `translateY(${bridge}px)`;
   requestAnimationFrame(() => tlBridgeHeadUntilSettled(head, finalOffset, framesLeft - 1));
 }
