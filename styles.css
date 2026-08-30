@@ -421,26 +421,37 @@ body[data-view="cal"] #fab { display: none; }
 
 /* 表示範囲の選択ボタン・アーカイブ表示・選択日のみ表示は、ガントの
    日付見出し行(#gantt内、JSで別途固定表示)と合わせてヘッダー直下に固定する。
-   topをずらして余白を作ると、固定中はその余白部分がこの要素の不透明な
-   背景でカバーされなくなり、下からスクロールしてきたガントの行が
-   突き抜けて見えてしまう。そこでtopは.wrap直下ぴったり(var(--fixed-h))の
-   ままにし、代わりに.wrapのpadding-top分をmargin-topの負値で打ち消してから
-   同じ量をpadding-topとして自分の内側に持たせる。これにより不透明な背景の
-   開始位置は常にヘッダー直下(隙間なし)のまま、余白は固定・非固定を問わず
-   常にこの要素の内側で一定に保たれる。
+   topに.wrapのpadding-top相当(16px+safe-area)を足し、固定される前後で
+   範囲選択ボタン上の余白が変わらないようにする。
+   これだと固定中、topをずらした分の隙間がこの要素の不透明な背景で
+   カバーされず、下からスクロールしてきたガントの行が突き抜けて見えて
+   しまう(margin-topの負値で打ち消す方式も試したが、position:fixedへの
+   一時切替えとの組み合わせでmargin計算を誤りやすく、ずれが再発したため
+   撤回した)。そこで#fixedbarsのすぐ下に、この隙間だけを覆う専用の
+   固定要素(#cal-gap-cover、.wrapの外にあるので.wrapのtransformの
+   影響を受けない)を常時配置してカバーする。
    display:flow-rootは、最後の子要素(.cal-nav2)のmargin-bottomがこの要素の
    外へ「はみ出して」collapseし、offsetHeight(JS側の位置計算に使用)が
    実際の見た目の高さより小さく計算されてしまう(結果、ガント見出し行との
    間隔が詰まって見える)のを防ぐため */
 .cal-sticky {
   position: sticky;
-  top: var(--fixed-h, 0px);
+  top: calc(var(--fixed-h, 0px) + 16px + env(safe-area-inset-top));
   z-index: 6;
   background: var(--bg);
   display: flow-root;
-  margin-top: calc(-16px - env(safe-area-inset-top));
-  padding-top: calc(16px + env(safe-area-inset-top));
 }
+#cal-gap-cover {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--fixed-h, 0px);
+  height: calc(16px + env(safe-area-inset-top));
+  background: var(--bg);
+  z-index: 5;
+}
+body[data-view="gantt"] #cal-gap-cover { display: block; }
 .cal-nav {
   display: flex;
   justify-content: space-between;

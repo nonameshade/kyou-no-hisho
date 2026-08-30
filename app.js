@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v92"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v93"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1650,14 +1650,11 @@ function updateGanttStickyHeader(scrollYOverride) {
   if (!headTrack || !headSide) return;
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
-  /* topEdge = navが実際に貼り付く位置(border-box基準) + navの実高さ。
-     CSSのtopプロパティはmargin-boxの外枠の位置なので、実際に描画される
-     border-boxの位置に揃えるにはmarginTopを足す必要がある(.cal-stickyは
-     .wrapのpadding-topを打ち消すためmargin-topに負の値を持っている)。
+  /* topEdge = navが実際に貼り付く位置(getComputedStyleで.cal-stickyのtop、
+     つまりvar(--fixed-h)+16px+safe-areaを解決したpx値) + navの実高さ。
      navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
-  const navMarginTop = nav ? parseFloat(getComputedStyle(nav).marginTop) || 0 : 0;
-  const topEdge = nav ? navTop + navMarginTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
+  const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
   const scrollY = scrollYOverride !== undefined ? scrollYOverride : window.scrollY;
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
@@ -2141,14 +2138,7 @@ function gEngageScrollFallback(e) {
       const spacer = document.getElementById("cal-sticky-spacer");
       if (spacer) spacer.style.height = "0px";
     }
-    /* CSSのtopプロパティ(吸着時の目標位置)はmargin-boxの外枠を指定するもので、
-       実際に描画されるborder-boxはそこからmarginTopぶんずれる(sticky/fixedは
-       共通の仕様)。position:staticで実測するgCalNaturalKはborder-box基準の
-       値なので、比較・計算を揃えるためgCalStickyTopにもmarginTopを加えて
-       border-box基準に揃えておく */
-    const rawTop = parseFloat(getComputedStyle(cal).top) || 0;
-    const marginTop = parseFloat(getComputedStyle(cal).marginTop) || 0;
-    gCalStickyTop = rawTop + marginTop;
+    gCalStickyTop = parseFloat(getComputedStyle(cal).top) || 0;
     const prevPosition = cal.style.position;
     cal.style.position = "static";
     const naturalTop = gScrollStartScrollY + cal.getBoundingClientRect().top;
@@ -2247,29 +2237,16 @@ function gFinalizeScrollFallback() {
   if (finalOffset === null) { cal.style.transform = ""; return; }
   const rect = cal.getBoundingClientRect();
   const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
-  /* .cal-stickyはmargin-top(負値、.wrapのpadding-topを打ち消すため)を
-     持っている。position:fixed/absoluteのtopは「マージン込みの外枠」の
-     位置を指定するプロパティで、実際に描画される枠(border-box)はそこから
-     さらにmarginTopぶんずれる(transformと違い、topはmarginを考慮した上で
-     解釈されるため)。desiredはtransform方式(marginを内包した自然な位置を
-     基準に計算)で求めた「border-boxをどこに描画したいか」の値なので、
-     position:fixedのtopに使うにはmarginTop分を打ち消す(引く)必要がある。
-     これを怠ると、marginTopの絶対値ぶんだけ上にずれて描画され、下の
-     ガント表との間に隙間ができてそこにガントの行が透けて見えてしまう */
-  const marginTop = parseFloat(getComputedStyle(cal).marginTop) || 0;
   cal.style.transform = "";
   cal.style.position = "fixed";
   cal.style.left = `${rect.left}px`;
   cal.style.width = `${rect.width}px`;
-  cal.style.top = `${desired - marginTop}px`;
+  cal.style.top = `${desired}px`;
   /* position:fixedにすると通常のドキュメントフローから外れ、それまで.cal-sticky
      が占めていた分の高さが消えて後続要素(#gantt)が詰まって見える(#timeline-head
-     のときと同じ問題)。spacerでその高さぶんを確保しておく。
-     getBoundingClientRect()の高さにはmarginが含まれないため、そのままでは
-     実際にフローから失われる高さより大きくなってしまう。marginTopの分
-     (負値なので足すと結果的に差し引かれる)を補正する */
+     のときと同じ問題)。spacerでその高さぶんを確保しておく */
   const spacer = document.getElementById("cal-sticky-spacer");
-  if (spacer) spacer.style.height = `${Math.max(0, rect.height + marginTop)}px`;
+  if (spacer) spacer.style.height = `${rect.height}px`;
   const gen = ++gCalSettleGen;
   const release = () => {
     if (gScrollFallback || gen !== gCalSettleGen) return;
