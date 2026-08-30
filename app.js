@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v94"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v95"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2164,12 +2164,14 @@ document.addEventListener("pointerdown", (e) => {
   if (view !== "gantt") return;
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
   if (e.target.closest(".overlay")) return; // 操作方法モーダル等の表示中
-  /* #gantt(表本体)だけでなく.cal-sticky(範囲選択ボタン等)から始まる
-     縦スワイプもここで受け止める。#gantt外から始まる縦スクロールは
-     ネイティブスクロールに委ねていたため、その間ネイティブの慣性
-     スクロール中はJSの実行が遅延し、見出し行が消える/追随しない
-     不具合があった */
-  if (!e.target.closest("#view-gantt")) return;
+  if (e.target.closest("input, textarea, select")) return;
+  /* #view-gantt(表本体+.cal-sticky)だけでなく、.topbar/.tabs(画面最上部の
+     日付表示・タブ切り替え。他タブと共有のためDOM上は#view-ganttの外にある)
+     から始まる縦スワイプもここで受け止める。対象外の領域から始まる縦
+     スクロールはネイティブスクロールに委ねることになり、その間ネイティブの
+     慣性スクロール中はJSの実行が遅延して見出し行が消える/追随しない
+     不具合があった。計画タブ表示中(view==="gantt")に限定されるため、
+     他タブのスクロールには影響しない */
   if (gScrollFallback) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }

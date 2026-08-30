@@ -458,6 +458,14 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 5;
 }
 body[data-view="gantt"] #cal-gap-cover { display: block; }
+/* .topbar/.tabsは他タブでは横スワイプ用にtouch-action:pan-y(縦はネイティブ
+   に許可)だが、計画タブ表示中だけは縦もJS管理の縦フェイクスクロールに
+   渡したい(.cal-stickyと同じ理由)。body[data-view]で計画タブ表示中だけ
+   上書きする */
+body[data-view="gantt"] .topbar,
+body[data-view="gantt"] .tabs {
+  touch-action: pan-x;
+}
 .cal-nav {
   display: flex;
   justify-content: space-between;
