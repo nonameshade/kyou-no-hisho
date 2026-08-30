@@ -113,7 +113,7 @@
             <div class="help-item"><span style="font-size:13px;">🔁</span>周期タスクの自動予定。タップでその日だけオン/オフ</div>
             <div class="help-item"><span class="mark ares-m">○</span>周期タスクの自動予備日(タスク編集の予備日ルールで設定)</div>
             <div class="help-item"><span style="font-size:13px;">↔</span>●や○は横にドラッグすると日付を移動できます</div>
-            <div class="help-item"><span style="font-size:13px;">▦</span>日付や見積合計をタップすると、下にその日の詳細が開きます</div>
+            <div class="help-item"><span style="font-size:13px;">長押し</span>マスを長押し(PCでは右クリック)すると「割り当てを編集」画面が開きます</div>
             <div class="help-item"><span style="color:#B0692B;font-weight:700;">名</span>オレンジ色のタスク名は、まだカレンダーに予定(●)が1つもないタスクです</div>
           </div>
           <div class="btn-row">
@@ -122,33 +122,6 @@
         </section>
       </div>
 
-      <section id="day-detail"></section>
-
-      <section id="asg-form" class="add-form hidden">
-        <div class="form-title" id="asg-form-title">タスクを割り当て</div>
-        <label class="f-label">タスクを選ぶ
-          <select id="a-task"></select>
-        </label>
-        <input type="text" id="a-title" placeholder="タスク名(直接入力)" maxlength="80" class="hidden" style="margin-top:10px;">
-        <div class="form-row">
-          <label>日付
-            <input type="date" id="a-date">
-          </label>
-          <label>開始時刻
-            <input type="time" id="a-start" value="09:00">
-          </label>
-          <label>見積(分)
-            <input type="number" id="a-est" min="1" max="600" value="25">
-          </label>
-        </div>
-        <div class="btn-row">
-          <button class="btn" data-action="asg-cancel">やめる</button>
-          <button class="btn solid" data-action="asg-save">保存する</button>
-        </div>
-        <div class="btn-row hidden" id="asg-delete-row">
-          <button class="btn danger" data-action="asg-delete">この割り当てを取り消す</button>
-        </div>
-      </section>
     </div>
 
     <!-- ============ 課題 ============ -->
@@ -357,6 +330,31 @@
       <div class="btn-row">
         <button class="btn" data-action="asg-edit-cancel">キャンセル</button>
         <button class="btn solid" data-action="asg-edit-save">保存</button>
+      </div>
+    </section>
+
+    <!-- 計画タブのマス長押し/右クリックからの編集: タスク・日付は表示のみ、
+         マーク(状態)とその日の開始時刻・見積を編集する全画面フォーム -->
+    <section id="gcell-form" class="add-form form-fullscreen hidden">
+      <div class="form-title">割り当てを編集</div>
+      <div class="f-label" id="gc-task"></div>
+      <div class="t-sub" id="gc-date" style="margin-top:2px;"></div>
+      <button type="button" class="gc-icon-btn" data-action="gc-icon-tap" style="margin-top:16px;">
+        <span class="gc-icon" id="gc-icon"></span>
+        <span id="gc-icon-label"></span>
+        <span class="gc-hint">タップで切替</span>
+      </button>
+      <div class="form-row">
+        <label>開始時刻
+          <input type="time" id="gc-start">
+        </label>
+        <label>見積(分)
+          <input type="number" id="gc-est" min="1" max="600">
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn" data-action="gc-cancel">キャンセル</button>
+        <button class="btn solid" data-action="gc-save">保存</button>
       </div>
     </section>
 

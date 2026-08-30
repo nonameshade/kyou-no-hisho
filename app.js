@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v88"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v90"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -73,8 +73,8 @@ let view = "today";
 let editingTaskId = null;
 let taskFormReturnAnchor = null; // キャンセル時に戻る行のid(編集なら本人、子タスク追加なら親)
 let editingIssueId = null;
-let editingAsgId = null;
 let editingAsgQuickId = null; // 今日タブの鉛筆アイコンから開く簡易編集(開始時刻・見積のみ)の対象id
+let gcellEdit = null; // 計画タブのマス長押し/右クリック編集の対象 { taskId, date }
 let selDate = todayKey();
 let viewDate = todayKey(); // 今日タブで表示中の日付
 let gStart = addDays(todayKey(), -7);
@@ -587,6 +587,14 @@ function progressOf(t) {
 
 /* ---------- 画面切替 ---------- */
 function switchView(v) {
+  /* 計画タブでの縦フェイクスクロール/慣性が終わらないまま別タブへ切り替えると、
+     .wrapのtransformが新しいタブの内容に残ったままになってしまうため、
+     切り替え前に確定させておく */
+  if (view === "gantt" && v !== "gantt" && (gScrollFallback || gMomentumRAF)) {
+    if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
+    if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
+    gFinalizeScrollFallback();
+  }
   view = v;
   document.body.dataset.view = v;
   document.querySelectorAll(".tab").forEach((el) =>
@@ -1378,9 +1386,12 @@ let selDayOnly = localStorage.getItem("hisho:ui:seldayonly") === "1";
 
 /* タスクtが日付dkに関係する(実施日・予備日・周期の自動予定・自動予備日の
    いずれかがある)かどうか。「選択日のタスクのみ表示」の絞り込みに使う。
-   summary(見出し)行は絞り込みの対象外として常に表示する */
+   summary(見出し)行自体はマークを持たないため、配下(子孫、入れ子のsummary
+   も再帰的に)にマークのある行が1つでもあれば関係ありとする */
 function taskRelevantToDate(t, dk) {
-  if (t.type === "summary") return true;
+  if (t.type === "summary") {
+    return state.tasks.some((c) => c.parentId === t.id && taskRelevantToDate(c, dk));
+  }
   if (state.assignments.some((a) => a.taskId === t.id && a.date === dk)) return true;
   if (findReserve(t.id, dk)) return true;
   if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk) && !hasSkip(t.id, dk)) return true;
@@ -1414,7 +1425,6 @@ function renderGantt() {
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
-    renderDayDetail();
     return;
   }
   const prevScroll = box.querySelector(".g-scroll");
@@ -1580,7 +1590,6 @@ function renderGantt() {
   }
   measureGanttSticky();
   updateGanttStickyHeader();
-  renderDayDetail();
 }
 
 /* #gantt本体の文書上の位置と日付ヘッダー行の高さは、レイアウトが変わらない
@@ -1607,9 +1616,17 @@ window.addEventListener("resize", () => {
   updateGanttStickyHeader();
 });
 
-/* 縦スクロール時、日付ヘッダー行を画面上部に貼り付ける */
-function updateGanttStickyHeader() {
+/* 縦スクロール時、日付ヘッダー行を画面上部に貼り付ける。
+   scrollYOverrideを渡すと、実際のwindow.scrollYの代わりにその値で計算する
+   (gApplyScrollFallback()が指のフェイクスクロール中に使う) */
+function updateGanttStickyHeader(scrollYOverride) {
   if (view !== "gantt") return;
+  /* フェイクスクロール中(gScrollFallback)は実スクロール位置(window.scrollY)が
+     まだ動いていないため、scrollYOverride無しでの呼び出し(scrollイベント/
+     ganttStickyLoopの毎フレーム呼び出し)は無視する。放置するとgApplyScroll
+     Fallback()側の(正しい)計算と同じフレーム内で競合し、見出し行が毎フレーム
+     2つの異なる値の間で揺れ動いてしまう */
+  if (scrollYOverride === undefined && gScrollFallback) return;
   const box = document.getElementById("gantt");
   if (!box) return;
   const headTrack = box.querySelector(".g-trow.g-sh");
@@ -1622,18 +1639,21 @@ function updateGanttStickyHeader() {
      navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
   const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
-  const scrollY = window.scrollY;
+  const scrollY = scrollYOverride !== undefined ? scrollYOverride : window.scrollY;
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
   let offset = 0;
   if (rectTop < topEdge && rectBottom > topEdge + ganttHeadHeight + 40) {
     offset = topEdge - rectTop;
   }
-  const tf = offset > 0 ? `translateY(${offset}px)` : "";
+  /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
+     指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
+     合成レイヤーが生成/破棄されちらつく問題を避けるため) */
+  const tf = `translateY(${offset}px)`;
   headTrack.style.transform = tf;
   headSide.style.transform = tf;
-  headTrack.classList.toggle("floating", offset > 0);
-  headSide.classList.toggle("floating", offset > 0);
+  headTrack.classList.toggle("floating", offset !== 0);
+  headSide.classList.toggle("floating", offset !== 0);
 }
 
 window.addEventListener("scroll", () => {
@@ -2025,6 +2045,198 @@ function ganttDragPointerEnd() {
 document.addEventListener("pointerup", ganttDragPointerEnd);
 document.addEventListener("pointercancel", ganttDragPointerEnd);
 
+/* ---------- 計画タブの縦スクロール(フェイクスクロール) ---------- */
+/* タイムライン見出しのちらつき調査で判明した通り、iOSはネイティブの慣性
+   スクロール中にJSの実行(rAFや読み取り)自体を遅延させることがあり、
+   scrollイベント頼みでは見出し行の追随が一瞬遅れて見える。そこで計画タブの
+   縦スクロールも、今日タブのタイムラインと同じ考え方で完全にJS管理にする:
+   ドラッグ中は.wrapをtransformで見た目だけ動かし(実スクロールに触れない)、
+   指を離したら速度に応じてJSで慣性させ、最後に一度だけ実スクロール位置を
+   確定する。この間ネイティブの慣性スクロールは一度も発生しないため、
+   ブラウザ側のJS実行遅延の影響を受けない。
+   ガントの見出し行はタイムラインと違いネイティブのposition:stickyを使わず
+   常にJS計算のtransformで描画しているため、確定後の「ネイティブへの引き渡し
+   待ち」は不要(updateGanttStickyHeader()を1回呼び直すだけで一致する) */
+let gScrollPending = null; // 判定待ち { x, y }
+let gScrollFallback = false;
+let gScrollStartY = 0;
+let gScrollStartScrollY = 0;
+let gScrollMaxY = 0;
+let gScrollPendingY = null;
+let gScrollRAF = null;
+let gScrollVelSamples = [];
+let gMomentumRAF = null;
+
+function gClampScrollOffset(offset) {
+  const minOffset = gScrollStartScrollY - gScrollMaxY;
+  const maxOffset = gScrollStartScrollY;
+  return Math.max(minOffset, Math.min(maxOffset, offset));
+}
+
+function gApplyScrollFallback() {
+  gScrollRAF = null;
+  if (!gScrollFallback || gScrollPendingY === null || view !== "gantt") return;
+  const wrap = document.querySelector(".wrap");
+  if (!wrap) return;
+  const offset = gClampScrollOffset(gScrollPendingY - gScrollStartY);
+  wrap.style.transform = `translateY(${offset}px)`;
+  /* 実際にスクロールしたのと同じ実効scrollYを渡し、見出し行の位置計算を
+     updateGanttStickyHeader()と完全に共通化する */
+  updateGanttStickyHeader(gScrollStartScrollY - offset);
+}
+
+function gEngageScrollFallback(e) {
+  gScrollPending = null;
+  drag = null; // マークのドラッグ移動が判定待ちのままなら取り消す(縦スクロール優先)
+  gScrollFallback = true;
+  gScrollStartY = e.clientY;
+  gScrollStartScrollY = window.scrollY;
+  gScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  gScrollVelSamples = [];
+  e.preventDefault();
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (view !== "gantt") return;
+  if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
+  if (!e.target.closest("#gantt")) return;
+  if (gScrollFallback) {
+    if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
+    if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
+    gFinalizeScrollFallback();
+  }
+  gScrollPending = { x: e.clientX, y: e.clientY };
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (gScrollFallback) {
+    e.preventDefault();
+    gScrollPendingY = e.clientY;
+    if (!gScrollRAF) gScrollRAF = requestAnimationFrame(gApplyScrollFallback);
+    const now = performance.now();
+    gScrollVelSamples.push({ t: now, y: e.clientY });
+    const cutoff = now - 100;
+    while (gScrollVelSamples.length > 1 && gScrollVelSamples[0].t < cutoff) gScrollVelSamples.shift();
+    return;
+  }
+  if (gScrollPending) {
+    const dx = e.clientX - gScrollPending.x;
+    const dy = e.clientY - gScrollPending.y;
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dy) <= Math.abs(dx)) { gScrollPending = null; return; } // 横方向優勢は横スクロール/マーク移動に譲る
+    gEngageScrollFallback(e);
+  }
+});
+
+function gStartMomentum(v0) {
+  if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
+  let velocity = Math.max(-TL_MOMENTUM_MAX_VELOCITY, Math.min(TL_MOMENTUM_MAX_VELOCITY, v0));
+  let lastT = performance.now();
+  function step() {
+    const now = performance.now();
+    const dt = Math.min(50, now - lastT);
+    lastT = now;
+    const sign = velocity > 0 ? 1 : -1;
+    let nextVelocity = velocity - sign * TL_MOMENTUM_DECEL * dt;
+    if (sign > 0 && nextVelocity < 0) nextVelocity = 0;
+    if (sign < 0 && nextVelocity > 0) nextVelocity = 0;
+    const avgVelocity = (velocity + nextVelocity) / 2;
+    velocity = nextVelocity;
+    gScrollPendingY += avgVelocity * dt;
+    gApplyScrollFallback();
+    const rawOffset = gScrollPendingY - gScrollStartY;
+    const hitBoundary = gClampScrollOffset(rawOffset) !== rawOffset;
+    if (velocity !== 0 && !hitBoundary) {
+      gMomentumRAF = requestAnimationFrame(step);
+    } else {
+      gMomentumRAF = null;
+      gFinalizeScrollFallback();
+    }
+  }
+  gMomentumRAF = requestAnimationFrame(step);
+}
+
+function gFinalizeScrollFallback() {
+  gScrollFallback = false;
+  const wrap = document.querySelector(".wrap");
+  if (wrap) {
+    if (gScrollPendingY !== null) {
+      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const minOffset = gScrollStartScrollY - freshMaxY;
+      const maxOffset = gScrollStartScrollY;
+      const rawOffset = gScrollPendingY - gScrollStartY;
+      const finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, gScrollStartScrollY - finalOffset);
+    }
+    wrap.style.transform = "";
+  }
+  gScrollPendingY = null;
+  updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
+}
+
+function gPointerEnd() {
+  gScrollPending = null;
+  if (!gScrollFallback) return;
+  if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
+  let fingerVel = 0;
+  if (gScrollVelSamples.length >= 2) {
+    const first = gScrollVelSamples[0];
+    const last = gScrollVelSamples[gScrollVelSamples.length - 1];
+    const dt = last.t - first.t;
+    if (dt > 0) fingerVel = (last.y - first.y) / dt;
+  }
+  gScrollVelSamples = [];
+  if (Math.abs(fingerVel) >= TL_MOMENTUM_MIN_VELOCITY) {
+    gStartMomentum(fingerVel);
+  } else {
+    gFinalizeScrollFallback();
+  }
+}
+document.addEventListener("pointerup", gPointerEnd);
+document.addEventListener("pointercancel", gPointerEnd);
+
+/* ---------- ガントのマス長押し/右クリック:割り当てを編集 ---------- */
+/* ロック中の日・summary行のマスは<div>(data-task/data-date無し)のため
+   button.g-cellでの絞り込みだけで自然に対象外になる。マークのドラッグ移動
+   (直近のpointerdown、8px以上動くとdrag.moved=trueになる)とは別に、
+   同じpointerdownから独立してタイマーを走らせ、動きがあれば取り消す */
+let gcellPressTimer = null;
+let gcellPressStart = null; // { x, y, taskId, date }
+const GCELL_LONGPRESS_MS = 500;
+
+document.addEventListener("pointerdown", (e) => {
+  if (view !== "gantt") return;
+  const cell = e.target.closest("button.g-cell");
+  if (!cell || !cell.dataset.task || !cell.dataset.date) return;
+  gcellPressStart = { x: e.clientX, y: e.clientY, taskId: cell.dataset.task, date: cell.dataset.date };
+  clearTimeout(gcellPressTimer);
+  gcellPressTimer = setTimeout(() => {
+    if (!gcellPressStart) return;
+    const { taskId, date } = gcellPressStart;
+    gcellPressStart = null;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+    openGcellForm(taskId, date);
+  }, GCELL_LONGPRESS_MS);
+});
+document.addEventListener("pointermove", (e) => {
+  if (!gcellPressStart) return;
+  if (Math.abs(e.clientX - gcellPressStart.x) > 8 || Math.abs(e.clientY - gcellPressStart.y) > 8) {
+    clearTimeout(gcellPressTimer);
+    gcellPressStart = null;
+  }
+});
+document.addEventListener("pointerup", () => { clearTimeout(gcellPressTimer); gcellPressStart = null; });
+document.addEventListener("pointercancel", () => { clearTimeout(gcellPressTimer); gcellPressStart = null; });
+
+document.addEventListener("contextmenu", (e) => {
+  if (view !== "gantt") return;
+  const cell = e.target.closest("button.g-cell");
+  if (!cell || !cell.dataset.task || !cell.dataset.date) return;
+  e.preventDefault();
+  openGcellForm(cell.dataset.task, cell.dataset.date);
+});
+
 /* ---------- 横スワイプでのタブ切り替え ---------- */
 /* 今日/計画/課題タブを横スワイプで切り替える。既に横方向の操作が
    割り当てられている領域(ガントの横スクロール・マークのドラッグ、課題タブの
@@ -2096,170 +2308,102 @@ function tabSwipeEnd() {
 document.addEventListener("pointerup", tabSwipeEnd);
 document.addEventListener("pointercancel", tabSwipeEnd);
 
-/* ---------- 日別詳細 ---------- *//* ---------- 日別詳細 ---------- */
-function renderDayDetail() {
-  const box = document.getElementById("day-detail");
-  const d = new Date(selDate + "T00:00:00");
-  const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-  const items = dayItems(selDate);
-  const total = items.reduce((s, i) => s + (i.estimateMin || 0), 0);
-  const jp = { todo: "未着手", doing: "作業中", done: "完了" };
-
-  const rows = items.length
-    ? items
-        .map((i) => {
-          const t = i.taskId ? taskById(i.taskId) : null;
-          const issue = t && t.issueId ? issueById(t.issueId) : null;
-          const chip = issue
-            ? `<span class="goal-chip" style="background:${issueColor(issue.id)}22;color:${issueColor(issue.id)}">${esc(issue.title)}</span>`
-            : "";
-          const lockedDay = isClosed(selDate);
-          const actions = lockedDay
-            ? `<span class="virtual-tag">🔒</span>`
-            : i.virtual
-              ? `<span class="virtual-tag">🔁 自動</span>
-                 <button class="sbtn muted" data-action="asg-fix" data-task="${i.taskId}" data-date="${selDate}">時間調整</button>`
-              : `<button class="sbtn muted" data-action="asg-edit" data-id="${i.id}">編集</button>`;
-          return `
-          <div class="p-row">
-            <div class="p-main">
-              <div class="p-title">${chip}${esc(i.virtual ? i.title : asgTitle(i))}</div>
-              <div class="p-sub">${i.start} ・ 見積 ${i.estimateMin}分 ・ ${jp[i.status] || ""}${i.spentSec > 5 ? ` ・ 実績 ${fmtDur(i.spentSec)}` : ""}</div>
-            </div>
-            <div class="p-actions">${actions}</div>
-          </div>`;
-        })
-        .join("")
-    : `<div class="plan-empty">この日の割り当てはまだありません。上のマスをタップするか「+ 割り当て」から追加できます。</div>`;
-
-  /* この日の予備日(手動+周期ルール) */
-  const resRows = [];
-  state.reserves
-    .filter((r) => r.date === selDate)
-    .forEach((r) => {
-      const t = taskById(r.taskId);
-      if (t) resRows.push(`<div class="p-row"><div class="p-main"><div class="p-title">○ ${esc(t.title)}</div><div class="p-sub">予備日</div></div></div>`);
-    });
-  state.tasks
-    .filter((t) => t.type === "recurring" && t.reserveRule)
-    .forEach((t) => {
-      if (ruleReserveDates(t, selDate, selDate).has(selDate)) {
-        resRows.push(`<div class="p-row"><div class="p-main"><div class="p-title">○ ${esc(t.title)}</div><div class="p-sub">予備日(自動)</div></div></div>`);
-      }
-    });
-
-  box.innerHTML = `
-    <div class="plan-head">
-      <h2 class="section-label">${d.getMonth() + 1}月${d.getDate()}日(${youbi}) 合計 ${fmtH(total)}${isClosed(selDate) ? " 🔒締め済み" : ""}</h2>
-      ${isClosed(selDate) ? "" : `<button class="sbtn" data-action="asg-add">+ 割り当て</button>`}
-    </div>
-    ${rows}
-    ${resRows.join("")}`;
-}
-
-/* ---------- 割り当てフォーム ---------- */
-function fillAsgTaskSelect() {
-  const sel = document.getElementById("a-task");
-  const options = [];
-  const walk = (parentId, depth) => {
-    state.tasks
-      .filter((t) => (t.parentId || null) === parentId)
-      .forEach((t) => {
-        if (!isTaskArchived(t) && t.type !== "summary" && !(t.type === "single" && t.done)) {
-          options.push(`<option value="${t.id}">${"　".repeat(depth)}${esc(t.title)}</option>`);
-        }
-        walk(t.id, depth + 1);
-      });
-  };
-  walk(null, 0);
-  sel.innerHTML = `<option value="">(直接入力する)</option>` + options.join("");
-}
-
-function openAsgForm(dk, asg) {
-  editingAsgId = asg ? asg.id : null;
-  fillAsgTaskSelect();
-  document.getElementById("asg-form-title").textContent = asg ? "割り当てを編集" : "タスクを割り当て";
-  document.getElementById("a-task").value = asg ? asg.taskId || "" : "";
-  document.getElementById("a-title").value = asg && !asg.taskId ? asg.title : "";
-  document.getElementById("a-date").value = asg ? asg.date : dk;
-  document.getElementById("a-start").value = asg ? asg.start : "09:00";
-  document.getElementById("a-est").value = asg ? asg.estimateMin : 25;
-  document.getElementById("asg-delete-row").classList.toggle("hidden", !asg);
-  updateAsgTitleVisibility();
-  const form = document.getElementById("asg-form");
-  form.classList.remove("hidden");
-  form.scrollIntoView({ behavior: "smooth" });
-}
-
-function updateAsgTitleVisibility() {
-  const hasTask = !!document.getElementById("a-task").value;
-  document.getElementById("a-title").classList.toggle("hidden", hasTask);
-}
-
-function saveAsgForm() {
-  let taskId = document.getElementById("a-task").value || null;
-  const title = document.getElementById("a-title").value.trim();
-  if (!taskId && !title) return;
-  const date = document.getElementById("a-date").value || selDate;
-  const start = document.getElementById("a-start").value || "09:00";
-  const est = Math.max(1, Number(document.getElementById("a-est").value) || 25);
-  if (isClosed(date)) { alert("その日は締め済みのため編集できません"); return; }
-  if (editingAsgId) {
-    const orig = state.assignments.find((x) => x.id === editingAsgId);
-    if (orig && isClosed(orig.date)) { alert("締め済みの日の割り当ては編集できません"); return; }
-  }
-  if (!taskId && !editingAsgId) {
-    taskId = createSingleTask(title, start, est).id; // 直接入力も原本を作る
-  }
-
-  if (editingAsgId) {
-    const a = state.assignments.find((x) => x.id === editingAsgId);
-    if (a) {
-      a.taskId = taskId;
-      a.title = taskId ? (taskById(taskId) || {}).title || a.title : title;
-      a.date = date;
-      a.start = start;
-      a.estimateMin = est;
-    }
-  } else {
-    state.assignments.push({
-      id: uid("a"),
-      taskId,
-      title: taskId ? (taskById(taskId) || {}).title || "" : title,
-      date,
-      start,
-      estimateMin: est,
-      status: "todo",
-      spentSec: 0,
-      startedAt: null,
-    });
-  }
-  editingAsgId = null;
-  document.getElementById("asg-form").classList.add("hidden");
-  selDate = date;
-  save();
-  renderGantt();
-}
-
-function fixVirtual(taskId, dk) {
-  if (isClosed(dk)) return;
+/* ---------- 割り当てを編集フォーム(長押し/右クリックで開く) ---------- */
+/* そのマスの現在の状態(実施/予備/自動予定/自動予備/空)を判定する。
+   renderGantt()のマス描画と同じ判定式 */
+function gcellState(taskId, dk) {
   const t = taskById(taskId);
-  if (!t) return;
-  const a = {
-    id: uid("a"),
-    taskId: t.id,
-    title: t.title,
-    date: dk,
-    start: t.defStart || "09:00",
-    estimateMin: t.estimateMin || 25,
-    status: "todo",
-    spentSec: 0,
-    startedAt: null,
-  };
-  state.assignments.push(a);
+  const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
+  const manualRes = !real && findReserve(taskId, dk);
+  const virt =
+    !real &&
+    t.type === "recurring" &&
+    dk >= todayKey() &&
+    occursOn(t, dk) &&
+    !hasSkip(taskId, dk);
+  const autoRes = !real && !virt && !manualRes && ruleReserveDates(t, dk, dk).has(dk);
+  return { t, real, manualRes, virt, autoRes };
+}
+
+function gcellIconInfo(st) {
+  if (st.real) {
+    return st.real.status === "done"
+      ? { icon: "✓", label: "完了", cls: "done-m" }
+      : { icon: "●", label: "実施日", cls: "todo-m" };
+  }
+  if (st.manualRes) return { icon: "○", label: "予備日", cls: "res-m" };
+  if (st.virt) return { icon: "🔁", label: "自動予定(周期タスク)", cls: "virt-m" };
+  if (st.autoRes) return { icon: "○", label: "予備日(自動)", cls: "ares-m" };
+  return { icon: "—", label: "空(未設定)", cls: "" };
+}
+
+function openGcellForm(taskId, dk) {
+  const t = taskById(taskId);
+  if (!t || isClosed(dk)) return;
+  gcellEdit = { taskId, date: dk };
+  document.getElementById("gc-task").textContent = t.title;
+  const d = new Date(dk + "T00:00:00");
+  const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+  document.getElementById("gc-date").textContent = `${d.getMonth() + 1}月${d.getDate()}日(${youbi})`;
+  refreshGcellForm();
+  document.getElementById("gcell-form").classList.remove("hidden");
+  syncFixedOffset();
+  lockBodyScroll();
+}
+
+/* マークの状態が変わるたび(アイコンタップ後)に表示を更新する */
+function refreshGcellForm() {
+  if (!gcellEdit) return;
+  const st = gcellState(gcellEdit.taskId, gcellEdit.date);
+  const { icon, label, cls } = gcellIconInfo(st);
+  const iconEl = document.getElementById("gc-icon");
+  iconEl.textContent = icon;
+  iconEl.className = `gc-icon ${cls}`;
+  document.getElementById("gc-icon-label").textContent = label;
+  document.getElementById("gc-start").value = st.real ? st.real.start : (st.t.defStart || "09:00");
+  document.getElementById("gc-est").value = st.real ? st.real.estimateMin : (st.t.estimateMin || 25);
+}
+
+/* アイコンをタップするとマスをタップしたのと同じ順序(空→●→○→空、周期タスクは
+   自動予定のオン/オフ)で状態が切り替わる。既存のtoggleCell()をそのまま使う */
+function gcellIconTap() {
+  if (!gcellEdit) return;
+  toggleCell(gcellEdit.taskId, gcellEdit.date);
+  refreshGcellForm();
+}
+
+function closeGcellForm() {
+  document.getElementById("gcell-form").classList.add("hidden");
+  unlockBodyScroll();
+  gcellEdit = null;
+}
+
+function saveGcellForm() {
+  if (!gcellEdit) return;
+  const { taskId, date } = gcellEdit;
+  if (isClosed(date)) { closeGcellForm(); return; }
+  const t = taskById(taskId);
+  const start = document.getElementById("gc-start").value || "09:00";
+  const est = Math.max(1, Number(document.getElementById("gc-est").value) || 25);
+  const real = state.assignments.find((a) => a.taskId === taskId && a.date === date);
+  if (real) {
+    real.start = start;
+    real.estimateMin = est;
+  } else {
+    /* 実施日でなければ(予備日/自動予定/空)、開始時刻・見積を入力して保存する
+       ことは実施日として確定させることを意味する。既存の予備日/スキップは解除する */
+    state.reserves = state.reserves.filter((r) => !(r.taskId === taskId && r.date === date));
+    if (t.type === "recurring" && hasSkip(taskId, date)) {
+      state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === date));
+    }
+    state.assignments.push({
+      id: uid("a"), taskId, title: t.title, date, start, estimateMin: est,
+      status: "todo", spentSec: 0, startedAt: null,
+    });
+  }
   save();
+  closeGcellForm();
   renderGantt();
-  openAsgForm(dk, a);
 }
 
 /* ---------- 描画:課題タブ(課題ごとにタスクを展開) ---------- */
@@ -3164,38 +3308,15 @@ document.addEventListener("click", (e) => {
   else if (action === "g-today") { gStart = addDays(todayKey(), -7); selDate = todayKey(); renderGantt(); }
   else if (action === "g-selday") {
     selDate = btn.dataset.date;
-    document.getElementById("asg-form").classList.add("hidden");
-    editingAsgId = null;
     renderGantt();
   } else if (action === "g-cell") {
     if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
-  } else if (action === "asg-add") {
-    openAsgForm(selDate, null);
-  } else if (action === "asg-edit") {
-    const a = state.assignments.find((x) => x.id === id);
-    if (a) openAsgForm(a.date, a);
-  } else if (action === "asg-cancel") {
-    editingAsgId = null;
-    document.getElementById("asg-form").classList.add("hidden");
-  } else if (action === "asg-save") {
-    saveAsgForm();
-  } else if (action === "asg-delete") {
-    if (editingAsgId && confirm("この割り当てを取り消しますか?")) {
-      const a = state.assignments.find((x) => x.id === editingAsgId);
-      state.assignments = state.assignments.filter((x) => x.id !== editingAsgId);
-      if (a && a.taskId) {
-        const t = taskById(a.taskId);
-        if (t && t.type === "recurring" && a.date >= todayKey() && occursOn(t, a.date)) {
-          state.skips.push({ taskId: a.taskId, date: a.date });
-        }
-      }
-      editingAsgId = null;
-      document.getElementById("asg-form").classList.add("hidden");
-      save();
-      renderGantt();
-    }
-  } else if (action === "asg-fix") {
-    fixVirtual(btn.dataset.task, btn.dataset.date);
+  } else if (action === "gc-icon-tap") {
+    gcellIconTap();
+  } else if (action === "gc-cancel") {
+    closeGcellForm();
+  } else if (action === "gc-save") {
+    saveGcellForm();
   }
 
   /* 課題 */
@@ -3368,14 +3489,6 @@ document.addEventListener("change", (e) => {
     selDayOnly = e.target.checked;
     localStorage.setItem("hisho:ui:seldayonly", selDayOnly ? "1" : "0");
     renderGantt();
-  }
-  if (e.target.id === "a-task") {
-    updateAsgTitleVisibility();
-    const t = e.target.value ? taskById(e.target.value) : null;
-    if (t && !editingAsgId) {
-      document.getElementById("a-start").value = t.defStart || "09:00";
-      document.getElementById("a-est").value = t.estimateMin || 25;
-    }
   }
 });
 
