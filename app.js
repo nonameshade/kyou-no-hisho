@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v90"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v91"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -595,6 +595,10 @@ function switchView(v) {
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
     gFinalizeScrollFallback();
   }
+  /* 計画タブに入るたびに「選択日のタスクのみ表示」の対象を最新化する
+     (前回タブを離れてからの変更を反映するため。タブ滞在中の個々のマーク
+     編集では更新しない、recomputeSelDayVisible()のコメント参照) */
+  if (v === "gantt" && selDayOnly) recomputeSelDayVisible();
   view = v;
   document.body.dataset.view = v;
   document.querySelectorAll(".tab").forEach((el) =>
@@ -1398,6 +1402,17 @@ function taskRelevantToDate(t, dk) {
   if (ruleReserveDates(t, dk, dk).has(dk)) return true;
   return false;
 }
+
+/* 「選択日のタスクのみ表示」の表示対象タスクidの一覧。マスのタップ/長押し編集/
+   ドラッグ移動でカレンダーを操作しても、この一覧はその場では更新しない(誤って
+   マークを消した、あるいはマークを変更する途中で一時的に空欄を通過しただけの
+   可能性があるため、対象から外れた行をその場で消してしまわないようにする)。
+   日付の選択が変わったときやチェックを入れた直後など、明示的なタイミングだけで
+   recomputeSelDayVisible()を呼んで更新する */
+let selDayVisibleIds = null;
+function recomputeSelDayVisible() {
+  selDayVisibleIds = new Set(state.tasks.filter((t) => taskRelevantToDate(t, selDate)).map((t) => t.id));
+}
 let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
 function saveOpenIssues() {
   localStorage.setItem("hisho:ui:openissues", JSON.stringify([...openIssueIds]));
@@ -1416,12 +1431,13 @@ function saveCollapsed() {
   localStorage.setItem("hisho:ui:collapsed", JSON.stringify([...collapsedIds]));
 }
 
-function renderGantt() {
+function renderGantt(refreshVisibility) {
   const box = document.getElementById("gantt");
   const archChk = document.getElementById("g-showarch");
   if (archChk) archChk.checked = showArch;
   const seldayChk = document.getElementById("g-selday-only");
   if (seldayChk) seldayChk.checked = selDayOnly;
+  if (selDayOnly && (refreshVisibility || !selDayVisibleIds)) recomputeSelDayVisible();
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
@@ -1489,7 +1505,7 @@ function renderGantt() {
       .forEach((t) => {
         const hideThis =
           (!showArch && isTaskArchived(t)) || // アーカイブのみ非表示(完了でも未アーカイブなら表示)
-          (selDayOnly && !taskRelevantToDate(t, selDate)); // 選択日のタスクのみ表示
+          (selDayOnly && !(selDayVisibleIds && selDayVisibleIds.has(t.id))); // 選択日のタスクのみ表示(スナップショット)
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
@@ -2056,7 +2072,10 @@ document.addEventListener("pointercancel", ganttDragPointerEnd);
    ブラウザ側のJS実行遅延の影響を受けない。
    ガントの見出し行はタイムラインと違いネイティブのposition:stickyを使わず
    常にJS計算のtransformで描画しているため、確定後の「ネイティブへの引き渡し
-   待ち」は不要(updateGanttStickyHeader()を1回呼び直すだけで一致する) */
+   待ち」は不要(updateGanttStickyHeader()を1回呼び直すだけで一致する)。
+   一方、範囲選択ボタン等(.cal-sticky)はネイティブのposition:stickyなので、
+   .wrapのtransformの影響を打ち消す必要があり(タイムライン見出しと同じ理由)、
+   確定時の引き渡しもタイムラインと同じposition:fixed一時切替えで行う */
 let gScrollPending = null; // 判定待ち { x, y }
 let gScrollFallback = false;
 let gScrollStartY = 0;
@@ -2066,6 +2085,10 @@ let gScrollPendingY = null;
 let gScrollRAF = null;
 let gScrollVelSamples = [];
 let gMomentumRAF = null;
+let gCalStickyTop = 0; // .cal-stickyのsticky吸着位置(--fixed-hを解決した実際のpx値)
+let gCalNaturalK = 0; // .cal-stickyの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
+let gCalBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置
+let gCalSettleGen = 0; // .cal-stickyのposition:fixed引き渡し待ちの世代カウンタ(timelineと同じ理由)
 
 function gClampScrollOffset(offset) {
   const minOffset = gScrollStartScrollY - gScrollMaxY;
@@ -2083,6 +2106,14 @@ function gApplyScrollFallback() {
   /* 実際にスクロールしたのと同じ実効scrollYを渡し、見出し行の位置計算を
      updateGanttStickyHeader()と完全に共通化する */
   updateGanttStickyHeader(gScrollStartScrollY - offset);
+  /* .cal-sticky(ネイティブsticky)は.wrapのtransformの影響をそのまま受けて
+     一緒に動いてしまうため、タイムライン見出しと同じ式で打ち消す */
+  const cal = document.querySelector(".cal-sticky");
+  if (cal) {
+    const desired = Math.max(gCalStickyTop, gCalNaturalK + offset);
+    const counter = desired - gCalBaseRendered - offset;
+    cal.style.transform = `translateY(${counter}px)`;
+  }
 }
 
 function gEngageScrollFallback(e) {
@@ -2093,6 +2124,28 @@ function gEngageScrollFallback(e) {
   gScrollStartScrollY = window.scrollY;
   gScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   gScrollVelSamples = [];
+  /* .cal-stickyの「本来の(吸着していない)位置」を測る。#timeline-headと同じ
+     手法(一時的にposition:staticに戻して実測)。前のジェスチャーの引き渡し
+     待ち(position:fixed)がまだ残っていれば、まずsticky管理下に戻す */
+  const cal = document.querySelector(".cal-sticky");
+  if (cal) {
+    gCalSettleGen++;
+    if (cal.style.position === "fixed") {
+      cal.style.position = "";
+      cal.style.left = "";
+      cal.style.width = "";
+      cal.style.top = "";
+      const spacer = document.getElementById("cal-sticky-spacer");
+      if (spacer) spacer.style.height = "0px";
+    }
+    gCalStickyTop = parseFloat(getComputedStyle(cal).top) || 0;
+    const prevPosition = cal.style.position;
+    cal.style.position = "static";
+    const naturalTop = gScrollStartScrollY + cal.getBoundingClientRect().top;
+    cal.style.position = prevPosition;
+    gCalNaturalK = naturalTop - gScrollStartScrollY;
+    gCalBaseRendered = Math.max(gCalStickyTop, gCalNaturalK);
+  }
   e.preventDefault();
 }
 
@@ -2159,19 +2212,53 @@ function gStartMomentum(v0) {
 function gFinalizeScrollFallback() {
   gScrollFallback = false;
   const wrap = document.querySelector(".wrap");
+  let finalOffset = null;
   if (wrap) {
     if (gScrollPendingY !== null) {
       const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       const minOffset = gScrollStartScrollY - freshMaxY;
       const maxOffset = gScrollStartScrollY;
       const rawOffset = gScrollPendingY - gScrollStartY;
-      const finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
       window.scrollTo(0, gScrollStartScrollY - finalOffset);
     }
     wrap.style.transform = "";
   }
   gScrollPendingY = null;
   updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
+
+  /* .cal-stickyはネイティブsticky。#timeline-headと同じ理由(ネイティブの
+     sticky計算がスクロール位置反映の途中で一時的に不安定になりうる)で、
+     確定直後の短い間だけJS管理のposition:fixedに切り替えてネイティブの
+     計算結果に依存しない絶対位置で描画し、scrollend/タイムアウトを待って
+     から一括でsticky管理に戻す */
+  const cal = document.querySelector(".cal-sticky");
+  if (!cal) return;
+  if (finalOffset === null) { cal.style.transform = ""; return; }
+  const rect = cal.getBoundingClientRect();
+  const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
+  cal.style.transform = "";
+  cal.style.position = "fixed";
+  cal.style.left = `${rect.left}px`;
+  cal.style.width = `${rect.width}px`;
+  cal.style.top = `${desired}px`;
+  const spacer = document.getElementById("cal-sticky-spacer");
+  if (spacer) spacer.style.height = `${rect.height}px`;
+  const gen = ++gCalSettleGen;
+  const release = () => {
+    if (gScrollFallback || gen !== gCalSettleGen) return;
+    cal.style.position = "";
+    cal.style.left = "";
+    cal.style.width = "";
+    cal.style.top = "";
+    if (spacer) spacer.style.height = "0px";
+  };
+  if ("onscrollend" in window) {
+    window.addEventListener("scrollend", release, { once: true });
+    setTimeout(release, 500);
+  } else {
+    setTimeout(release, 300);
+  }
 }
 
 function gPointerEnd() {
@@ -3305,10 +3392,10 @@ document.addEventListener("click", (e) => {
   /* ガント */
   else if (action === "g-prev") { gStart = addDays(gStart, -14); renderGantt(); }
   else if (action === "g-next") { gStart = addDays(gStart, 14); renderGantt(); }
-  else if (action === "g-today") { gStart = addDays(todayKey(), -7); selDate = todayKey(); renderGantt(); }
+  else if (action === "g-today") { gStart = addDays(todayKey(), -7); selDate = todayKey(); renderGantt(true); }
   else if (action === "g-selday") {
     selDate = btn.dataset.date;
-    renderGantt();
+    renderGantt(true);
   } else if (action === "g-cell") {
     if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
   } else if (action === "gc-icon-tap") {
@@ -3488,7 +3575,7 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "g-selday-only") {
     selDayOnly = e.target.checked;
     localStorage.setItem("hisho:ui:seldayonly", selDayOnly ? "1" : "0");
-    renderGantt();
+    renderGantt(true);
   }
 });
 
