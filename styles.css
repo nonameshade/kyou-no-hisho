@@ -440,6 +440,12 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 6;
   background: var(--bg);
   display: flow-root;
+  /* 内側の.cal-navはタブ間共通でtouch-action:pan-y(横スワイプでのタブ切替用)
+     だが、計画タブでは縦方向もJS管理の縦フェイクスクロール(gScrollFallback)
+     に渡したい。祖先のtouch-actionは子と交差(intersect)されるため、ここで
+     pan-xを指定すると計画タブ内の.cal-navでは実質どちらの方向もネイティブに
+     渡らなくなり(pan-x∩pan-y)、縦横ともJSの判定に委ねられる */
+  touch-action: pan-x;
 }
 #cal-gap-cover {
   display: none;

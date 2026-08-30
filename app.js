@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v93"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v94"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1618,6 +1618,7 @@ function renderGantt(refreshVisibility) {
 let ganttBoxDocTop = 0;
 let ganttBoxDocHeight = 0;
 let ganttHeadHeight = 0;
+let ganttHeadDocTop = 0;
 function measureGanttSticky() {
   const box = document.getElementById("gantt");
   if (!box) return;
@@ -1626,6 +1627,11 @@ function measureGanttSticky() {
   ganttBoxDocTop = r.top + window.scrollY;
   ganttBoxDocHeight = r.height;
   ganttHeadHeight = headTrack ? headTrack.offsetHeight : 0;
+  /* #gantt自身に1pxの枠線があり、中身(見出し行)はその内側から始まるため
+     #gantt自身の矩形より数px下にずれている。見出し行の「浮いていないとき
+     の自然な位置」はbox自身ではなく見出し行そのものを測って求める(枠線の
+     幅を決め打ちしないため、枠線の太さが変わってもずれない) */
+  ganttHeadDocTop = headTrack ? headTrack.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
 }
 window.addEventListener("resize", () => {
   measureGanttSticky();
@@ -1658,9 +1664,14 @@ function updateGanttStickyHeader(scrollYOverride) {
   const scrollY = scrollYOverride !== undefined ? scrollYOverride : window.scrollY;
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
+  /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
+     実際に浮かせる位置は見出し行自身の自然な位置(headNaturalTop)を基準に
+     計算する。#ganttには1pxの枠線があり見出し行はその内側から始まるため、
+     #gantt自身の矩形をそのまま基準にすると数px分ずれてしまう */
+  const headNaturalTop = ganttHeadDocTop - scrollY;
   let offset = 0;
   if (rectTop < topEdge && rectBottom > topEdge + ganttHeadHeight + 40) {
-    offset = topEdge - rectTop;
+    offset = topEdge - headNaturalTop;
   }
   /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
      指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
@@ -2152,7 +2163,13 @@ function gEngageScrollFallback(e) {
 document.addEventListener("pointerdown", (e) => {
   if (view !== "gantt") return;
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
-  if (!e.target.closest("#gantt")) return;
+  if (e.target.closest(".overlay")) return; // 操作方法モーダル等の表示中
+  /* #gantt(表本体)だけでなく.cal-sticky(範囲選択ボタン等)から始まる
+     縦スワイプもここで受け止める。#gantt外から始まる縦スクロールは
+     ネイティブスクロールに委ねていたため、その間ネイティブの慣性
+     スクロール中はJSの実行が遅延し、見出し行が消える/追随しない
+     不具合があった */
+  if (!e.target.closest("#view-gantt")) return;
   if (gScrollFallback) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
