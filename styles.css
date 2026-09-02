@@ -1255,12 +1255,14 @@ input[type="date"], input[type="time"] {
 .swipe-wrap.show-action .swipe-action { visibility: visible; }
 
 /* 日付ヘッダーの上部固定(浮いているときの見た目) */
-.g-trow.g-sh, .g-side .g-scell.g-sh {
+.g-trow.g-sh, .g-side .g-scell.g-sh,
+.g-trow.g-ss, .g-side .g-scell.g-ss {
   position: relative;
   z-index: 4;
   background: var(--surface);
   will-change: transform;
 }
-.g-trow.g-sh.floating, .g-side .g-scell.g-sh.floating {
+.g-trow.g-sh.floating, .g-side .g-scell.g-sh.floating,
+.g-trow.g-ss.floating, .g-side .g-scell.g-ss.floating {
   box-shadow: 0 3px 8px rgba(23,33,43,.12);
 }

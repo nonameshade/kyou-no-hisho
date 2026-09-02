@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v96"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v98"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1619,10 +1619,13 @@ let ganttBoxDocTop = 0;
 let ganttBoxDocHeight = 0;
 let ganttHeadHeight = 0;
 let ganttHeadDocTop = 0;
+let ganttSumHeight = 0;
+let ganttSumDocTop = 0;
 function measureGanttSticky() {
   const box = document.getElementById("gantt");
   if (!box) return;
   const headTrack = box.querySelector(".g-trow.g-sh");
+  const sumTrack = box.querySelector(".g-trow.g-ss");
   const r = box.getBoundingClientRect();
   ganttBoxDocTop = r.top + window.scrollY;
   ganttBoxDocHeight = r.height;
@@ -1632,6 +1635,8 @@ function measureGanttSticky() {
      の自然な位置」はbox自身ではなく見出し行そのものを測って求める(枠線の
      幅を決め打ちしないため、枠線の太さが変わってもずれない) */
   ganttHeadDocTop = headTrack ? headTrack.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
+  ganttSumHeight = sumTrack ? sumTrack.offsetHeight : 0;
+  ganttSumDocTop = sumTrack ? sumTrack.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop + ganttHeadHeight;
 }
 window.addEventListener("resize", () => {
   measureGanttSticky();
@@ -1653,6 +1658,8 @@ function updateGanttStickyHeader(scrollYOverride) {
   if (!box) return;
   const headTrack = box.querySelector(".g-trow.g-sh");
   const headSide = box.querySelector(".g-side .g-scell.g-sh");
+  const sumTrack = box.querySelector(".g-trow.g-ss");
+  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
   if (!headTrack || !headSide) return;
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
@@ -1667,11 +1674,15 @@ function updateGanttStickyHeader(scrollYOverride) {
   /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
      実際に浮かせる位置は見出し行自身の自然な位置(headNaturalTop)を基準に
      計算する。#ganttには1pxの枠線があり見出し行はその内側から始まるため、
-     #gantt自身の矩形をそのまま基準にすると数px分ずれてしまう */
+     #gantt自身の矩形をそのまま基準にすると数px分ずれてしまう。
+     見積合計行(.g-ss)も見出し行のすぐ下に連なって固定する */
   const headNaturalTop = ganttHeadDocTop - scrollY;
+  const combinedHeight = ganttHeadHeight + ganttSumHeight;
   let offset = 0;
-  if (rectTop < topEdge && rectBottom > topEdge + ganttHeadHeight + 40) {
+  let floating = false;
+  if (rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40) {
     offset = topEdge - headNaturalTop;
+    floating = true;
   }
   /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
      指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
@@ -1679,8 +1690,19 @@ function updateGanttStickyHeader(scrollYOverride) {
   const tf = `translateY(${offset}px)`;
   headTrack.style.transform = tf;
   headSide.style.transform = tf;
-  headTrack.classList.toggle("floating", offset !== 0);
-  headSide.classList.toggle("floating", offset !== 0);
+  headTrack.classList.toggle("floating", floating);
+  headSide.classList.toggle("floating", floating);
+
+  if (sumTrack && sumSide) {
+    const sumNaturalTop = ganttSumDocTop - scrollY;
+    const sumDesired = topEdge + ganttHeadHeight; // 見出し行のすぐ下
+    const sumOffset = floating ? sumDesired - sumNaturalTop : 0;
+    const sumTf = `translateY(${sumOffset}px)`;
+    sumTrack.style.transform = sumTf;
+    sumSide.style.transform = sumTf;
+    sumTrack.classList.toggle("floating", floating);
+    sumSide.classList.toggle("floating", floating);
+  }
 }
 
 window.addEventListener("scroll", () => {
@@ -2177,7 +2199,14 @@ document.addEventListener("pointerdown", (e) => {
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
     gFinalizeScrollFallback();
   }
-  gScrollPending = { x: e.clientX, y: e.clientY };
+  /* .g-scroll/.g-side(表本体、横方向のネイティブスクロールが必要)以外は
+     ネイティブに横スクロールの需要が無いのに、方向判定中(8px未満)は
+     まだpreventDefaultしていなかったため、ネイティブが先にバーティカル
+     スクロールを開始してしまい、その後のpreventDefaultでは止められない
+     ことがあった(.wrapの余白部分等、touch-actionを個別に指定していない
+     場所で発生)。該当領域か覚えておき、pointermoveの判定中から先んじて
+     preventDefaultする */
+  gScrollPending = { x: e.clientX, y: e.clientY, allowNativeHorizontal: !!e.target.closest(".g-scroll, .g-side") };
 });
 
 document.addEventListener("pointermove", (e) => {
@@ -2192,6 +2221,7 @@ document.addEventListener("pointermove", (e) => {
     return;
   }
   if (gScrollPending) {
+    if (!gScrollPending.allowNativeHorizontal) e.preventDefault();
     const dx = e.clientX - gScrollPending.x;
     const dy = e.clientY - gScrollPending.y;
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
