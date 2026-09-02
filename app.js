@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v98"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v99"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2229,6 +2229,19 @@ document.addEventListener("pointermove", (e) => {
     gEngageScrollFallback(e);
   }
 });
+
+/* pointermoveでのpreventDefault()だけでは、iOSでスクロールの合成(コンポジット)
+   がメインスレッドのJSを待たずに先行してしまうこと(スワイプの速度が速いほど
+   ヘッダーが消えたままになり、遅いとちらつきながら見えることがある症状の
+   原因と考えられる)があるため、より確実にネイティブスクロールをブロックする
+   目的で、非passiveなtouchmoveでも同じ条件でpreventDefault()する(Pointer
+   Eventsだけに頼らず、従来からのタッチイベントの経路でも早期に止める) */
+document.addEventListener("touchmove", (e) => {
+  if (view !== "gantt") return;
+  if (gScrollFallback || (gScrollPending && !gScrollPending.allowNativeHorizontal)) {
+    e.preventDefault();
+  }
+}, { passive: false });
 
 function gStartMomentum(v0) {
   if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
