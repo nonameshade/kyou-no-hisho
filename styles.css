@@ -440,12 +440,14 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 6;
   background: var(--bg);
   display: flow-root;
-  /* 内側の.cal-navはタブ間共通でtouch-action:pan-y(横スワイプでのタブ切替用)
-     だが、計画タブでは縦方向もJS管理の縦フェイクスクロール(gScrollFallback)
-     に渡したい。祖先のtouch-actionは子と交差(intersect)されるため、ここで
-     pan-xを指定すると計画タブ内の.cal-navでは実質どちらの方向もネイティブに
-     渡らなくなり(pan-x∩pan-y)、縦横ともJSの判定に委ねられる */
-  touch-action: pan-x;
+  /* .cal-sticky配下は横(タブ切り替え)も縦(縦フェイクスクロール)もJSが
+     全面的に処理し、ネイティブの横スクロールが必要な要素は無い。
+     pan-x/pan-yのような部分許可だとiOSでネイティブのジェスチャー認識と
+     競合し、preventDefault()が効かずネイティブスクロールが発生する
+     ことがあった(ヘッダーがスワイプ中ずっと消え、指を離した後も慣性が
+     続く間ちらつく不具合の原因)。noneで完全にネイティブへ渡さないように
+     する(.g-cell.has-markと同じ、実績のある方式) */
+  touch-action: none;
 }
 #cal-gap-cover {
   display: none;
@@ -459,12 +461,13 @@ body[data-view="cal"] #fab { display: none; }
 }
 body[data-view="gantt"] #cal-gap-cover { display: block; }
 /* .topbar/.tabsは他タブでは横スワイプ用にtouch-action:pan-y(縦はネイティブ
-   に許可)だが、計画タブ表示中だけは縦もJS管理の縦フェイクスクロールに
-   渡したい(.cal-stickyと同じ理由)。body[data-view]で計画タブ表示中だけ
-   上書きする */
+   に許可)だが、計画タブ表示中は横(タブ切り替え)・縦(縦フェイクスクロール)
+   ともJSが全面的に処理するため、pan-x/pan-yのような部分許可ではなくnoneに
+   する(.cal-stickyと同じ理由。body[data-view]で計画タブ表示中だけ上書き) */
 body[data-view="gantt"] .topbar,
-body[data-view="gantt"] .tabs {
-  touch-action: pan-x;
+body[data-view="gantt"] .tabs,
+body[data-view="gantt"] #fixedbars {
+  touch-action: none;
 }
 .cal-nav {
   display: flex;
