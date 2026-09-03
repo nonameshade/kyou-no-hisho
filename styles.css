@@ -547,12 +547,17 @@ body[data-view="gantt"] #fixedbars {
 /* ---------- ガント(フェーズ3c) ---------- */
 body[data-view="gantt"] .wrap { max-width: 980px; }
 
+/* overflow-x:autoを指定すると(overflow-yを指定していなくても)#gantt自身が
+   スクロールコンテナになり、.g-side(タスク名列)がその子孫である以上、
+   position:stickyの基準がビューポートではなく#gantt自身になってしまう
+   (ネイティブstickyが効かなくなるのと同じ理由で、期待した位置からずれる)。
+   横スクロールは子の.g-scroll側に既にoverflow-x:autoがあり、#gantt自身に
+   持たせる必要はないため外す(角丸のクリップが効かなくなる副作用はあるが、
+   タスク名列の固定位置がずれる方が実害が大きいため許容する) */
 #gantt {
-  overflow-x: auto;
   background: var(--surface);
   border-radius: 14px;
   border: 1px solid var(--line);
-  -webkit-overflow-scrolling: touch;
 }
 .g-inner { display: inline-block; min-width: 100%; }
 .g-row { display: flex; border-top: 1px solid #EEF1F4; }
