@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v103"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v105"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1590,11 +1590,17 @@ function renderGantt(refreshVisibility) {
         <div class="g-scell g-ss">見積合計</div>
         ${sideRows.join("")}
       </div>
-      <div class="g-scroll">
-        <div style="width:${trackW}px">
-          <div class="g-trow g-sh">${hcells}</div>
-          <div class="g-trow g-ss">${lockCols}${sumCells}</div>
-          ${trackRows.join("")}
+      <div class="g-track-wrap">
+        <div class="g-track-head">
+          <div class="g-track-head-inner" style="width:${trackW}px">
+            <div class="g-trow g-sh">${hcells}</div>
+            <div class="g-trow g-ss">${lockCols}${sumCells}</div>
+          </div>
+        </div>
+        <div class="g-scroll">
+          <div style="width:${trackW}px">
+            ${trackRows.join("")}
+          </div>
         </div>
       </div>
     </div>`;
@@ -1604,8 +1610,29 @@ function renderGantt(refreshVisibility) {
     if (keepLeft !== null) sc.scrollLeft = keepLeft;
     else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
   }
+  /* 日付見出し行(.g-track-head-inner)は.g-scrollの外に出したため、
+     横スクロール位置を自分では追随しない。scrollLeft復元直後に
+     一度だけ明示的に揃えておく(以後はsyncGanttTrackHeadX()が
+     .g-scrollのscrollイベントで追随させる) */
+  syncGanttTrackHeadX();
   measureGanttSticky();
   updateGanttStickyHeader();
+}
+
+/* 日付見出し行(.g-track-head-inner)は.g-scrollの外(ネイティブstickyを
+   使うため)にあるので、.g-scrollを横スクロールしても自動的には追随しない。
+   .g-scrollのscrollLeftに合わせてtranslateXを当てて同期する。
+   scrollイベントはバブリングしないため、#gantt(renderGantt()で中身が
+   丸ごと差し替わっても要素自体は再生成されない)にキャプチャフェーズで
+   一度だけ登録し、再描画のたびに登録し直さなくて済むようにする */
+function syncGanttTrackHeadX() {
+  const scroller = document.querySelector("#gantt .g-scroll");
+  const headInner = document.querySelector("#gantt .g-track-head-inner");
+  if (scroller && headInner) headInner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
+}
+{
+  const box = document.getElementById("gantt");
+  if (box) box.addEventListener("scroll", syncGanttTrackHeadX, true);
 }
 
 /* #gantt本体の文書上の位置と日付ヘッダー行の高さは、レイアウトが変わらない
@@ -1618,37 +1645,47 @@ function renderGantt(refreshVisibility) {
 let ganttBoxDocTop = 0;
 let ganttBoxDocHeight = 0;
 let ganttHeadHeight = 0;
-let ganttHeadDocTop = 0; // .g-trow.g-sh(右側、日付トラック)の自然な位置
+let ganttHeadDocTop = 0; // .g-track-head(右側、日付トラック側の見出し全体)の自然な位置
 let ganttHeadSideDocTop = 0; // .g-side .g-scell.g-sh(左側、タスク名列)の自然な位置
 let ganttSumHeight = 0;
-let ganttSumDocTop = 0;
 let ganttSumSideDocTop = 0;
 function measureGanttSticky() {
   const box = document.getElementById("gantt");
   if (!box) return;
-  const headTrack = box.querySelector(".g-trow.g-sh");
+  const trackHead = box.querySelector(".g-track-head");
+  const headRow = box.querySelector(".g-trow.g-sh");
+  const sumRow = box.querySelector(".g-trow.g-ss");
   const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumTrack = box.querySelector(".g-trow.g-ss");
   const sumSide = box.querySelector(".g-side .g-scell.g-ss");
   const r = box.getBoundingClientRect();
   ganttBoxDocTop = r.top + window.scrollY;
   ganttBoxDocHeight = r.height;
-  ganttHeadHeight = headTrack ? headTrack.offsetHeight : 0;
-  /* #gantt自身に1pxの枠線があり、中身(見出し行)はその内側から始まるため
-     #gantt自身の矩形より数px下にずれている。見出し行の「浮いていないとき
-     の自然な位置」はbox自身ではなく見出し行そのものを測って求める(枠線の
-     幅を決め打ちしないため、枠線の太さが変わってもずれない)。
-     左側(タスク名列)と右側(日付トラック)は別要素なので、同じ自然位置に
-     揃っている保証がない(実際、これがずれておりタスク行がヘッダーの上に
-     はみ出して見える不具合の原因だった)。両方を個別に測って、それぞれ
-     自分自身の自然位置を基準にfloatさせる */
-  ganttHeadDocTop = headTrack ? headTrack.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
+  ganttHeadHeight = headRow ? headRow.offsetHeight : 0;
+  ganttSumHeight = sumRow ? sumRow.offsetHeight : 0;
+  /* 右側(日付トラック)は.g-trow.g-sh/.g-ssをまとめて.g-track-head(ネイティブ
+     position:sticky)1つで固定するようになったため、.g-track-head自身の
+     自然な位置を測る。左側(タスク名列)は.g-scell.g-sh/.g-ssそれぞれが
+     個別にネイティブstickyのため、両方を個別に測る(自然位置が完全に
+     一致する保証はなく、実際わずかにずれてタスク行の文字がヘッダーの上に
+     はみ出して見える不具合の原因になっていた) */
+  ganttHeadDocTop = trackHead ? trackHead.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
   ganttHeadSideDocTop = headSide ? headSide.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop;
-  ganttSumHeight = sumTrack ? sumTrack.offsetHeight : 0;
-  ganttSumDocTop = sumTrack ? sumTrack.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop + ganttHeadHeight;
   ganttSumSideDocTop = sumSide ? sumSide.getBoundingClientRect().top + window.scrollY : ganttHeadSideDocTop + ganttHeadHeight;
 }
 window.addEventListener("resize", () => {
+  /* DevToolsのスマホ/PC表示切り替え等でリサイズが発生すると、進行中の
+     ポインタ操作にpointerup/pointercancelが届かないまま終わることがあり、
+     gScrollFallbackがtrueに固定されたままになる。この場合
+     updateGanttStickyHeader()のscrollYOverrideなし呼び出しは全て無視
+     されてしまい(gApplyScrollFallback側の計算と競合させないための
+     ガード)、右側の見出し行が更新されなくなる(固定されなくなったように
+     見える)。リサイズ時は進行中のフェイクスクロールを強制的に確定させ、
+     状態が固定化されないようにする */
+  if (gScrollFallback) {
+    if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
+    if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
+    gFinalizeScrollFallback();
+  }
   measureGanttSticky();
   updateGanttStickyHeader();
 });
@@ -1666,11 +1703,10 @@ function updateGanttStickyHeader(scrollYOverride) {
   if (scrollYOverride === undefined && gScrollFallback) return;
   const box = document.getElementById("gantt");
   if (!box) return;
-  const headTrack = box.querySelector(".g-trow.g-sh");
+  const trackHead = box.querySelector(".g-track-head");
   const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumTrack = box.querySelector(".g-trow.g-ss");
   const sumSide = box.querySelector(".g-side .g-scell.g-ss");
-  if (!headTrack || !headSide) return;
+  if (!trackHead || !headSide) return;
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
   /* topEdge = navが実際に貼り付く位置(getComputedStyleで.cal-stickyのtop、
@@ -1678,7 +1714,7 @@ function updateGanttStickyHeader(scrollYOverride) {
      navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
   const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
-  /* .g-side側(タスク名列)のネイティブposition:stickyが参照する目標値。
+  /* .g-track-head/.g-side側のネイティブposition:stickyが参照する目標値。
      ドラッグの有無にかかわらず常に最新化しておく。--gantt-head-heightは
      見積合計行(.g-ss)がすぐ下に連なる位置を計算するのに使う(CSS側で
      32pxと決め打ちしない) */
@@ -1688,32 +1724,22 @@ function updateGanttStickyHeader(scrollYOverride) {
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
   /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
-     実際に浮かせる位置は見出し行自身の自然な位置を基準に計算する。#gantt
-     には1pxの枠線があり見出し行はその内側から始まるため、#gantt自身の
-     矩形をそのまま基準にすると数px分ずれてしまう。見積合計行(.g-ss)も
-     見出し行のすぐ下に連なって固定する */
-  const headNaturalTop = ganttHeadDocTop - scrollY;
+     実際に浮かせる位置は各要素自身の自然な位置を基準に計算する。#gantt
+     には1pxの枠線があり中の行はその内側から始まるため、#gantt自身の
+     矩形をそのまま基準にすると数px分ずれてしまう */
   const combinedHeight = ganttHeadHeight + ganttSumHeight;
-  let offset = 0;
-  let floating = false;
-  if (rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40) {
-    offset = topEdge - headNaturalTop;
-    floating = true;
-  }
-  /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
-     指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
-     合成レイヤーが生成/破棄されちらつく問題を避けるため)。
-     これは.g-trow側(日付トラック、常にJS管理)にのみ適用する */
-  headTrack.style.transform = `translateY(${offset}px)`;
-  headTrack.classList.toggle("floating", floating);
-  /* .g-side側(タスク名列)はネイティブのposition:stickyに任せるのが基本。
-     ただし指でのドラッグ中(gScrollFallback、scrollYOverrideありで呼ばれる)
-     だけは.wrapのtransformに巻き込まれてしまうため、.cal-stickyと同じ
-     理由でJS計算のtransformを一時的に上乗せする。ドラッグ以外(ネイティブ
-     scrollイベント・ganttStickyLoopの毎フレーム呼び出し)ではtransformを
-     空にしてネイティブの計算に完全に委ね、iOSやChromeがアクティブな
-     スクロール中にrequestAnimationFrameを間引く(ヘッダーが一瞬消える
-     不具合の原因と考えられる)影響を受けないようにする。
+  const floating = rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40;
+  /* 右側(日付トラック)は日付見出し行・見積合計行をまとめた.g-track-head
+     1つがネイティブのposition:stickyで固定される(.g-scrollの横スクロール
+     に巻き込まれないよう.g-scrollの外に出してある)。左側(タスク名列)も
+     ネイティブのposition:stickyに任せるのが基本。ただし指でのドラッグ中
+     (gScrollFallback、scrollYOverrideありで呼ばれる)だけは.wrapの
+     transformに巻き込まれてしまうため、.cal-stickyと同じ理由でJS計算の
+     transformを一時的に上乗せする。ドラッグ以外(ネイティブscrollイベント・
+     ganttStickyLoopの毎フレーム呼び出し)ではtransformを空にしてネイティブ
+     の計算に完全に委ね、iOSやChromeがアクティブなスクロール中に
+     requestAnimationFrameを間引く(ヘッダーが一瞬消える不具合の原因と
+     考えられる)影響を受けないようにする。
      ネイティブstickyはドラッグ中も実スクロール位置(gScrollStartScrollYで
      固定されたまま)を基準に計算され続けるため、その「素の描画位置」
      (baseRendered、吸着していればtopEdge・していなければ自然位置)と
@@ -1721,6 +1747,17 @@ function updateGanttStickyHeader(scrollYOverride) {
      現在(フェイクスクロール後)の目標位置に合わせる。.cal-stickyの
      打ち消し式と同じ考え方 */
   const wrapOffset = scrollYOverride !== undefined ? gScrollStartScrollY - scrollY : 0;
+
+  const headNaturalTop = ganttHeadDocTop - scrollY;
+  let trackOffset = 0;
+  if (scrollYOverride !== undefined) {
+    const trackBaseRendered = Math.max(topEdge, ganttHeadDocTop - gScrollStartScrollY);
+    const trackDesired = Math.max(topEdge, headNaturalTop);
+    trackOffset = trackDesired - trackBaseRendered - wrapOffset;
+  }
+  trackHead.style.transform = scrollYOverride !== undefined ? `translateY(${trackOffset}px)` : "";
+  trackHead.classList.toggle("floating", floating);
+
   const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
   let offsetSide = 0;
   if (scrollYOverride !== undefined) {
@@ -1731,20 +1768,16 @@ function updateGanttStickyHeader(scrollYOverride) {
   headSide.style.transform = scrollYOverride !== undefined ? `translateY(${offsetSide}px)` : "";
   headSide.classList.toggle("floating", floating);
 
-  if (sumTrack && sumSide) {
-    const sumNaturalTop = ganttSumDocTop - scrollY;
-    const sumSideNaturalTop = ganttSumSideDocTop - scrollY;
+  if (sumSide) {
     const sumDesired = topEdge + ganttHeadHeight; // 見出し行のすぐ下
-    const sumOffset = floating ? sumDesired - sumNaturalTop : 0;
+    const sumSideNaturalTop = ganttSumSideDocTop - scrollY;
     let sumOffsetSide = 0;
     if (scrollYOverride !== undefined) {
       const sumSideBaseRendered = Math.max(sumDesired, ganttSumSideDocTop - gScrollStartScrollY);
       const sumSideDesired = Math.max(sumDesired, sumSideNaturalTop);
       sumOffsetSide = sumSideDesired - sumSideBaseRendered - wrapOffset;
     }
-    sumTrack.style.transform = `translateY(${sumOffset}px)`;
     sumSide.style.transform = scrollYOverride !== undefined ? `translateY(${sumOffsetSide}px)` : "";
-    sumTrack.classList.toggle("floating", floating);
     sumSide.classList.toggle("floating", floating);
   }
 }
