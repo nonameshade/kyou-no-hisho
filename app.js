@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v101"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v102"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1678,36 +1678,57 @@ function updateGanttStickyHeader(scrollYOverride) {
      navのtopをCSS側で変更しても値がずれないよう、CSSの計算結果をそのまま読む */
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
   const topEdge = nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
+  /* .g-side側(タスク名列)のネイティブposition:stickyが参照する目標値。
+     ドラッグの有無にかかわらず常に最新化しておく。--gantt-head-heightは
+     見積合計行(.g-ss)がすぐ下に連なる位置を計算するのに使う(CSS側で
+     32pxと決め打ちしない) */
+  document.documentElement.style.setProperty("--gantt-head-top", `${topEdge}px`);
+  document.documentElement.style.setProperty("--gantt-head-height", `${ganttHeadHeight}px`);
   const scrollY = scrollYOverride !== undefined ? scrollYOverride : window.scrollY;
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
   /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
      実際に浮かせる位置は見出し行自身の自然な位置を基準に計算する。#gantt
      には1pxの枠線があり見出し行はその内側から始まるため、#gantt自身の
-     矩形をそのまま基準にすると数px分ずれてしまう。
-     左側(タスク名列)と右側(日付トラック)は別要素で、両者の自然位置が
-     完全に一致している保証はない(実際にわずかにずれており、タスク行の
-     文字がヘッダーの上にはみ出して見える不具合の原因になっていた)。
-     そのため同じtransform値を使い回さず、それぞれ自分自身の自然位置を
-     基準に個別のoffsetを計算する。見積合計行(.g-ss)も見出し行のすぐ下に
-     連なって固定する */
+     矩形をそのまま基準にすると数px分ずれてしまう。見積合計行(.g-ss)も
+     見出し行のすぐ下に連なって固定する */
   const headNaturalTop = ganttHeadDocTop - scrollY;
-  const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
   const combinedHeight = ganttHeadHeight + ganttSumHeight;
   let offset = 0;
-  let offsetSide = 0;
   let floating = false;
   if (rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40) {
     offset = topEdge - headNaturalTop;
-    offsetSide = topEdge - headSideNaturalTop;
     floating = true;
   }
   /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
      指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
-     合成レイヤーが生成/破棄されちらつく問題を避けるため) */
+     合成レイヤーが生成/破棄されちらつく問題を避けるため)。
+     これは.g-trow側(日付トラック、常にJS管理)にのみ適用する */
   headTrack.style.transform = `translateY(${offset}px)`;
-  headSide.style.transform = `translateY(${offsetSide}px)`;
   headTrack.classList.toggle("floating", floating);
+  /* .g-side側(タスク名列)はネイティブのposition:stickyに任せるのが基本。
+     ただし指でのドラッグ中(gScrollFallback、scrollYOverrideありで呼ばれる)
+     だけは.wrapのtransformに巻き込まれてしまうため、.cal-stickyと同じ
+     理由でJS計算のtransformを一時的に上乗せする。ドラッグ以外(ネイティブ
+     scrollイベント・ganttStickyLoopの毎フレーム呼び出し)ではtransformを
+     空にしてネイティブの計算に完全に委ね、iOSやChromeがアクティブな
+     スクロール中にrequestAnimationFrameを間引く(ヘッダーが一瞬消える
+     不具合の原因と考えられる)影響を受けないようにする。
+     ネイティブstickyはドラッグ中も実スクロール位置(gScrollStartScrollYで
+     固定されたまま)を基準に計算され続けるため、その「素の描画位置」
+     (baseRendered、吸着していればtopEdge・していなければ自然位置)と
+     .wrapのtransform量(wrapOffset)の両方を打ち消してから、あらためて
+     現在(フェイクスクロール後)の目標位置に合わせる。.cal-stickyの
+     打ち消し式と同じ考え方 */
+  const wrapOffset = scrollYOverride !== undefined ? gScrollStartScrollY - scrollY : 0;
+  const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
+  let offsetSide = 0;
+  if (scrollYOverride !== undefined) {
+    const headSideBaseRendered = Math.max(topEdge, ganttHeadSideDocTop - gScrollStartScrollY);
+    const headSideDesired = Math.max(topEdge, headSideNaturalTop);
+    offsetSide = headSideDesired - headSideBaseRendered - wrapOffset;
+  }
+  headSide.style.transform = scrollYOverride !== undefined ? `translateY(${offsetSide}px)` : "";
   headSide.classList.toggle("floating", floating);
 
   if (sumTrack && sumSide) {
@@ -1715,9 +1736,14 @@ function updateGanttStickyHeader(scrollYOverride) {
     const sumSideNaturalTop = ganttSumSideDocTop - scrollY;
     const sumDesired = topEdge + ganttHeadHeight; // 見出し行のすぐ下
     const sumOffset = floating ? sumDesired - sumNaturalTop : 0;
-    const sumOffsetSide = floating ? sumDesired - sumSideNaturalTop : 0;
+    let sumOffsetSide = 0;
+    if (scrollYOverride !== undefined) {
+      const sumSideBaseRendered = Math.max(sumDesired, ganttSumSideDocTop - gScrollStartScrollY);
+      const sumSideDesired = Math.max(sumDesired, sumSideNaturalTop);
+      sumOffsetSide = sumSideDesired - sumSideBaseRendered - wrapOffset;
+    }
     sumTrack.style.transform = `translateY(${sumOffset}px)`;
-    sumSide.style.transform = `translateY(${sumOffsetSide}px)`;
+    sumSide.style.transform = scrollYOverride !== undefined ? `translateY(${sumOffsetSide}px)` : "";
     sumTrack.classList.toggle("floating", floating);
     sumSide.classList.toggle("floating", floating);
   }

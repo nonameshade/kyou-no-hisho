@@ -1260,10 +1260,34 @@ input[type="date"], input[type="time"] {
 .swipe-action { visibility: hidden; }
 .swipe-wrap.show-action .swipe-action { visibility: visible; }
 
-/* 日付ヘッダーの上部固定(浮いているときの見た目) */
-.g-trow.g-sh, .g-side .g-scell.g-sh,
-.g-trow.g-ss, .g-side .g-scell.g-ss {
+/* 日付ヘッダーの上部固定(浮いているときの見た目)。
+   .g-trow側(日付トラック)は.g-scroll(横スクロール用にoverflow-x:auto)の
+   子孫のため、ネイティブのposition:stickyが使えず(祖先のoverflowが縦横
+   問わずstickyを無効化するため)、常にJS計算のtransformで固定表示している。
+   一方.g-side側(タスク名列)の祖先にはoverflowを持つ要素がないため、
+   ネイティブのposition:stickyが使える。ネイティブstickyはブラウザの
+   コンポジタが直接計算するため、JSのrequestAnimationFrameがアクティブな
+   スクロール中に間引かれる(ちらつき/ヘッダーが一瞬消える不具合の原因)
+   影響を受けない。--gantt-head-topはupdateGanttStickyHeader()がJS側の
+   計算結果と揃えて同期する。指でのドラッグ中(gScrollFallback)は.wrapの
+   transformに巻き込まれるため、その間だけ.cal-stickyと同じ理由で
+   JS計算のtransformを上乗せする(ドラッグ終了後はネイティブに戻す) */
+.g-trow.g-sh, .g-trow.g-ss {
   position: relative;
+  z-index: 4;
+  background: var(--surface);
+  will-change: transform;
+}
+.g-side .g-scell.g-sh {
+  position: sticky;
+  top: var(--gantt-head-top, 0px);
+  z-index: 4;
+  background: var(--surface);
+  will-change: transform;
+}
+.g-side .g-scell.g-ss {
+  position: sticky;
+  top: calc(var(--gantt-head-top, 0px) + var(--gantt-head-height, 32px));
   z-index: 4;
   background: var(--surface);
   will-change: transform;
