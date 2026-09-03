@@ -769,18 +769,20 @@ body[data-view="gantt"] .wrap { max-width: 980px; }
 /* 日付見出し行・見積合計行は、横スクロール領域(.g-scroll)の外に置き、
    ネイティブのposition:stickyで縦方向を固定する(.g-side側と同じ理由)。
    横スクロールに合わせた位置合わせはsyncGanttTrackHeadX()がJSで行う
-   (.g-track-head-innerにtranslateXを当てる)。overflow:hiddenは
-   .g-track-head-inner(表示中の日付範囲より広い)のはみ出しを隠すためで、
-   ここでの指定は自分自身の子孫のstickyを妨げるだけで自分自身のsticky
-   計算には影響しない(祖先側にoverflowが無ければ問題ない) */
+   (.g-track-head-innerにtranslateXを当てる)。
+   stickyの計算対象(.g-track-head)自身にはoverflowを一切持たせず、
+   はみ出し切り抜き用のoverflow:hiddenは子の.g-track-head-clipに分離する。
+   同一要素にposition:stickyとoverflowを併用すると、ブラウザや発生条件に
+   よってはstickyの固定が不安定になる(スクロール中に追随してしまう/
+   点滅する)ことが実機検証で確認されたため、この分離で回避する */
 .g-track-head {
   position: sticky;
   top: var(--gantt-head-top, 0px);
   z-index: 4;
-  overflow: hidden;
   background: var(--surface);
   will-change: transform;
 }
+.g-track-head-clip { overflow: hidden; }
 .g-track-head-inner { will-change: transform; }
 .g-scroll {
   overflow-x: auto;

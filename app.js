@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v105"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v106"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1592,9 +1592,11 @@ function renderGantt(refreshVisibility) {
       </div>
       <div class="g-track-wrap">
         <div class="g-track-head">
-          <div class="g-track-head-inner" style="width:${trackW}px">
-            <div class="g-trow g-sh">${hcells}</div>
-            <div class="g-trow g-ss">${lockCols}${sumCells}</div>
+          <div class="g-track-head-clip">
+            <div class="g-track-head-inner" style="width:${trackW}px">
+              <div class="g-trow g-sh">${hcells}</div>
+              <div class="g-trow g-ss">${lockCols}${sumCells}</div>
+            </div>
           </div>
         </div>
         <div class="g-scroll">
