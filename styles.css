@@ -292,6 +292,12 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
   font-family: inherit;
   box-shadow: 0 8px 24px rgba(23,33,43,.28);
   cursor: pointer;
+  /* z-indexを指定していなかったため、明示的にz-indexを持つガント表の
+     固定名前列(.g-side)やマス(.g-cell)・見出し行(.g-trow.g-sh/.g-ss)より
+     下に描画され、ボタンの左半分が隠れて実際にはその下のカレンダーの
+     マスが反応してしまっていた。ページ内の通常コンテンツより確実に
+     上に来るよう明示的に指定する */
+  z-index: 20;
 }
 
 @media (prefers-reduced-motion: reduce) {

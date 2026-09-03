@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v99"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v101"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1618,14 +1618,18 @@ function renderGantt(refreshVisibility) {
 let ganttBoxDocTop = 0;
 let ganttBoxDocHeight = 0;
 let ganttHeadHeight = 0;
-let ganttHeadDocTop = 0;
+let ganttHeadDocTop = 0; // .g-trow.g-sh(右側、日付トラック)の自然な位置
+let ganttHeadSideDocTop = 0; // .g-side .g-scell.g-sh(左側、タスク名列)の自然な位置
 let ganttSumHeight = 0;
 let ganttSumDocTop = 0;
+let ganttSumSideDocTop = 0;
 function measureGanttSticky() {
   const box = document.getElementById("gantt");
   if (!box) return;
   const headTrack = box.querySelector(".g-trow.g-sh");
+  const headSide = box.querySelector(".g-side .g-scell.g-sh");
   const sumTrack = box.querySelector(".g-trow.g-ss");
+  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
   const r = box.getBoundingClientRect();
   ganttBoxDocTop = r.top + window.scrollY;
   ganttBoxDocHeight = r.height;
@@ -1633,10 +1637,16 @@ function measureGanttSticky() {
   /* #gantt自身に1pxの枠線があり、中身(見出し行)はその内側から始まるため
      #gantt自身の矩形より数px下にずれている。見出し行の「浮いていないとき
      の自然な位置」はbox自身ではなく見出し行そのものを測って求める(枠線の
-     幅を決め打ちしないため、枠線の太さが変わってもずれない) */
+     幅を決め打ちしないため、枠線の太さが変わってもずれない)。
+     左側(タスク名列)と右側(日付トラック)は別要素なので、同じ自然位置に
+     揃っている保証がない(実際、これがずれておりタスク行がヘッダーの上に
+     はみ出して見える不具合の原因だった)。両方を個別に測って、それぞれ
+     自分自身の自然位置を基準にfloatさせる */
   ganttHeadDocTop = headTrack ? headTrack.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
+  ganttHeadSideDocTop = headSide ? headSide.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop;
   ganttSumHeight = sumTrack ? sumTrack.offsetHeight : 0;
   ganttSumDocTop = sumTrack ? sumTrack.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop + ganttHeadHeight;
+  ganttSumSideDocTop = sumSide ? sumSide.getBoundingClientRect().top + window.scrollY : ganttHeadSideDocTop + ganttHeadHeight;
 }
 window.addEventListener("resize", () => {
   measureGanttSticky();
@@ -1672,34 +1682,42 @@ function updateGanttStickyHeader(scrollYOverride) {
   const rectTop = ganttBoxDocTop - scrollY;
   const rectBottom = rectTop + ganttBoxDocHeight;
   /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
-     実際に浮かせる位置は見出し行自身の自然な位置(headNaturalTop)を基準に
-     計算する。#ganttには1pxの枠線があり見出し行はその内側から始まるため、
-     #gantt自身の矩形をそのまま基準にすると数px分ずれてしまう。
-     見積合計行(.g-ss)も見出し行のすぐ下に連なって固定する */
+     実際に浮かせる位置は見出し行自身の自然な位置を基準に計算する。#gantt
+     には1pxの枠線があり見出し行はその内側から始まるため、#gantt自身の
+     矩形をそのまま基準にすると数px分ずれてしまう。
+     左側(タスク名列)と右側(日付トラック)は別要素で、両者の自然位置が
+     完全に一致している保証はない(実際にわずかにずれており、タスク行の
+     文字がヘッダーの上にはみ出して見える不具合の原因になっていた)。
+     そのため同じtransform値を使い回さず、それぞれ自分自身の自然位置を
+     基準に個別のoffsetを計算する。見積合計行(.g-ss)も見出し行のすぐ下に
+     連なって固定する */
   const headNaturalTop = ganttHeadDocTop - scrollY;
+  const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
   const combinedHeight = ganttHeadHeight + ganttSumHeight;
   let offset = 0;
+  let offsetSide = 0;
   let floating = false;
   if (rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40) {
     offset = topEdge - headNaturalTop;
+    offsetSide = topEdge - headSideNaturalTop;
     floating = true;
   }
   /* offset===0でもtransformプロパティ自体は消さず常に明示的なtranslateYを
      指定する(タイムラインヘッダーで判明した、値の有無を切り替えるたびに
      合成レイヤーが生成/破棄されちらつく問題を避けるため) */
-  const tf = `translateY(${offset}px)`;
-  headTrack.style.transform = tf;
-  headSide.style.transform = tf;
+  headTrack.style.transform = `translateY(${offset}px)`;
+  headSide.style.transform = `translateY(${offsetSide}px)`;
   headTrack.classList.toggle("floating", floating);
   headSide.classList.toggle("floating", floating);
 
   if (sumTrack && sumSide) {
     const sumNaturalTop = ganttSumDocTop - scrollY;
+    const sumSideNaturalTop = ganttSumSideDocTop - scrollY;
     const sumDesired = topEdge + ganttHeadHeight; // 見出し行のすぐ下
     const sumOffset = floating ? sumDesired - sumNaturalTop : 0;
-    const sumTf = `translateY(${sumOffset}px)`;
-    sumTrack.style.transform = sumTf;
-    sumSide.style.transform = sumTf;
+    const sumOffsetSide = floating ? sumDesired - sumSideNaturalTop : 0;
+    sumTrack.style.transform = `translateY(${sumOffset}px)`;
+    sumSide.style.transform = `translateY(${sumOffsetSide}px)`;
     sumTrack.classList.toggle("floating", floating);
     sumSide.classList.toggle("floating", floating);
   }
