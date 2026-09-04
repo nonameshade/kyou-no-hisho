@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v107"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v108"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1672,9 +1672,28 @@ function measureGanttSticky() {
      個別にネイティブstickyのため、両方を個別に測る(自然位置が完全に
      一致する保証はなく、実際わずかにずれてタスク行の文字がヘッダーの上に
      はみ出して見える不具合の原因になっていた) */
-  ganttHeadDocTop = trackHead ? trackHead.getBoundingClientRect().top + window.scrollY : ganttBoxDocTop;
-  ganttHeadSideDocTop = headSide ? headSide.getBoundingClientRect().top + window.scrollY : ganttHeadDocTop;
-  ganttSumSideDocTop = sumSide ? sumSide.getBoundingClientRect().top + window.scrollY : ganttHeadSideDocTop + ganttHeadHeight;
+  ganttHeadDocTop = ganttNaturalDocTop(trackHead) ?? ganttBoxDocTop;
+  ganttHeadSideDocTop = ganttNaturalDocTop(headSide) ?? ganttHeadDocTop;
+  ganttSumSideDocTop = ganttNaturalDocTop(sumSide) ?? ganttHeadSideDocTop + ganttHeadHeight;
+}
+
+/* position:stickyで既に吸着中の要素は、getBoundingClientRect().topが
+   「吸着位置」を返してしまい、「本来の(吸着していない)自然位置」を正しく
+   測れない(ページを途中までスクロールした状態で計画タブを開く/再描画される
+   と、この時点で既に吸着済みのことがある)。.cal-sticky/#timeline-headの
+   自然位置測定と全く同じ手法で、一時的にposition:staticへ切り替えて実測
+   してから元に戻す(同期的に戻すため見た目のちらつきは出ない)。この誤測定は
+   画面ローテート後に次のドラッグでヘッダーが指に追随して見える不具合の
+   直接原因だったと考えられる(誤ったganttHeadDocTop等を基準に打ち消し量を
+   計算すると、結果がほぼ0になり.wrapのtransformがヘッダーにもそのまま
+   効いてしまうため) */
+function ganttNaturalDocTop(el) {
+  if (!el || el.style.position === "fixed") return null; // fixed引き渡し中は測定対象として不適切
+  const prevPosition = el.style.position;
+  el.style.position = "static";
+  const top = el.getBoundingClientRect().top + window.scrollY;
+  el.style.position = prevPosition;
+  return top;
 }
 /* .cal-sticky(範囲選択ナビ)のすぐ下の位置。ヘッダー系要素のtopとして
    updateGanttStickyHeader()とgSettleHeadFixed()の両方から参照するため
@@ -1771,7 +1790,11 @@ function updateGanttStickyHeader(scrollYOverride) {
     const trackDesired = Math.max(topEdge, headNaturalTop);
     trackOffset = trackDesired - trackBaseRendered - wrapOffset;
   }
-  trackHead.style.transform = scrollYOverride !== undefined ? `translateY(${trackOffset}px)` : "";
+  /* trackOffsetはドラッグ中(scrollYOverrideあり)以外は0のまま(上のif文参照)。
+     transformを空文字に戻さず常にtranslateYを明示するのは、CSS側の
+     transform: translateY(0px)ベースライン宣言と対になっている
+     (.g-track-headのコメント参照。noneへの切り替えを避けるため) */
+  trackHead.style.transform = `translateY(${trackOffset}px)`;
   trackHead.classList.toggle("floating", floating);
 
   const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
@@ -1781,7 +1804,7 @@ function updateGanttStickyHeader(scrollYOverride) {
     const headSideDesired = Math.max(topEdge, headSideNaturalTop);
     offsetSide = headSideDesired - headSideBaseRendered - wrapOffset;
   }
-  headSide.style.transform = scrollYOverride !== undefined ? `translateY(${offsetSide}px)` : "";
+  headSide.style.transform = `translateY(${offsetSide}px)`;
   headSide.classList.toggle("floating", floating);
 
   if (sumSide) {
@@ -1793,7 +1816,7 @@ function updateGanttStickyHeader(scrollYOverride) {
       const sumSideDesired = Math.max(sumDesired, sumSideNaturalTop);
       sumOffsetSide = sumSideDesired - sumSideBaseRendered - wrapOffset;
     }
-    sumSide.style.transform = scrollYOverride !== undefined ? `translateY(${sumOffsetSide}px)` : "";
+    sumSide.style.transform = `translateY(${sumOffsetSide}px)`;
     sumSide.classList.toggle("floating", floating);
   }
 }
@@ -2269,7 +2292,7 @@ function gSettleHeadFixed(finalOffset) {
        独立に計算する(.cal-stickyの引き渡しと同じ考え方) */
     const rect = trackHead.getBoundingClientRect();
     const desired = Math.max(topEdge, ganttHeadDocTop - scrollY);
-    trackHead.style.transform = "";
+    trackHead.style.transform = "translateY(0px)"; // fixed化中もCSSベースラインと同じ値を明示(noneに落とさない)
     trackHead.style.position = "fixed";
     trackHead.style.left = `${rect.left}px`;
     trackHead.style.width = `${rect.width}px`;
@@ -2281,7 +2304,7 @@ function gSettleHeadFixed(finalOffset) {
   if (headSide) {
     const rect = headSide.getBoundingClientRect();
     const desired = Math.max(topEdge, ganttHeadSideDocTop - scrollY);
-    headSide.style.transform = "";
+    headSide.style.transform = "translateY(0px)";
     headSide.style.position = "fixed";
     headSide.style.left = `${rect.left}px`;
     headSide.style.width = `${rect.width}px`;
@@ -2293,7 +2316,7 @@ function gSettleHeadFixed(finalOffset) {
     const rect = sumSide.getBoundingClientRect();
     const sumDesired = topEdge + ganttHeadHeight;
     const desired = Math.max(sumDesired, ganttSumSideDocTop - scrollY);
-    sumSide.style.transform = "";
+    sumSide.style.transform = "translateY(0px)";
     sumSide.style.position = "fixed";
     sumSide.style.left = `${rect.left}px`;
     sumSide.style.width = `${rect.width}px`;

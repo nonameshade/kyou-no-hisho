@@ -781,6 +781,17 @@ body[data-view="gantt"] .wrap { max-width: 980px; }
   z-index: 4;
   background: var(--surface);
   will-change: transform;
+  /* #timeline-headと同じ「常時何もしないtransformを持たせておく」対策。
+     will-change:transformだけではJSがstyle.transformを空文字に戻した瞬間
+     computed transformがnoneになるのを防げない(will-change自体は合成レイヤーの
+     ヒントであって代替のtransform値にはならない)。#timeline-headはCSSで
+     transform: translateY(0px)を宣言しているため、JS側でstyle.transformを
+     空文字に戻すとこのCSS宣言に落ちてtranslateY(0px)のまま維持される
+     (noneには絶対にならない)。ガント表側のこの3要素にはこの宣言がなく、
+     空文字に戻すとcomputed transformがnoneになって合成レイヤー/スタッキング
+     コンテキストが生成・破棄され、それが点滅・はみ出しの一因だったと考えられる
+     ため、JS側も含めtranslateY(0px)を明示し続けるように統一する */
+  transform: translateY(0px);
 }
 .g-track-head-clip { overflow: hidden; }
 .g-track-head-inner { will-change: transform; }
@@ -1312,6 +1323,7 @@ input[type="date"], input[type="time"] {
   z-index: 4;
   background: var(--surface);
   will-change: transform;
+  transform: translateY(0px); /* .g-track-headと同じ理由(常時transformを持たせておく) */
 }
 .g-side .g-scell.g-ss {
   position: sticky;
@@ -1319,6 +1331,7 @@ input[type="date"], input[type="time"] {
   z-index: 4;
   background: var(--surface);
   will-change: transform;
+  transform: translateY(0px);
 }
 .g-track-head.floating, .g-side .g-scell.g-sh.floating,
 .g-side .g-scell.g-ss.floating {
