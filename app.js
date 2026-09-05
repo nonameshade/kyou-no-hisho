@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v108"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v109"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1703,7 +1703,11 @@ function ganttTopEdge() {
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
-  return nav ? navTop + nav.offsetHeight : (bars ? bars.offsetHeight : 0);
+  /* offsetHeightは整数に丸められる(端数切り捨て/丸め)ため、.cal-stickyの
+     実際の高さが端数を持つ場合に最大1px前後の誤差が生じ、ヘッダーが
+     本来より下にずれて隙間からタスク行がはみ出して見える一因になっていた。
+     getBoundingClientRect().heightは小数点まで正確な値を返す */
+  return nav ? navTop + nav.getBoundingClientRect().height : (bars ? bars.getBoundingClientRect().height : 0);
 }
 
 window.addEventListener("resize", () => {
