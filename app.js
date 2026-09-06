@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v111"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v112"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2436,15 +2436,49 @@ function gFinalizeScrollFallback() {
   gScrollPendingY = null;
   updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
 
-  /* 【実験中】.cal-stickyの確定直後position:fixed一時退避を無効化し、
-     単純にtransformを消してネイティブstickyに任せるだけにしている。
-     ガント見出し行の同種の処理(v107で導入、v110で撤去)を撤去しても
-     点滅(症状1)が解消しなかったため、position:sticky→fixedの切り替え
-     という操作自体が、切り替えた要素に関係なく一時的な広い範囲の再合成を
-     引き起こしているのではないかという仮説を検証している(元のコードは
-     git履歴に残っている) */
+  /* .cal-stickyはネイティブsticky。#timeline-headと同じ理由(ネイティブの
+     sticky計算がスクロール位置反映の途中で一時的に不安定になりうる)で、
+     確定直後の短い間だけJS管理のposition:fixedに切り替えてネイティブの
+     計算結果に依存しない絶対位置で描画し、scrollend/タイムアウトを待って
+     から一括でsticky管理に戻す。
+     (実験メモ: この処理を一時的に無効化して検証したところ、ガント見出し行の
+     点滅が「ヘッダーが固定表示中のみ」から「固定表示でなくても常に」発生する
+     ように悪化したため元に戻した。この処理は点滅の原因ではなく、むしろ
+     発生範囲を限定する側に働いていたと考えられる) */
   const cal = document.querySelector(".cal-sticky");
-  if (cal) cal.style.transform = "";
+  if (cal) {
+    if (finalOffset === null) {
+      cal.style.transform = "";
+    } else {
+      const rect = cal.getBoundingClientRect();
+      const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
+      cal.style.transform = "";
+      cal.style.position = "fixed";
+      cal.style.left = `${rect.left}px`;
+      cal.style.width = `${rect.width}px`;
+      cal.style.top = `${desired}px`;
+      /* position:fixedにすると通常のドキュメントフローから外れ、それまで.cal-sticky
+         が占めていた分の高さが消えて後続要素(#gantt)が詰まって見える(#timeline-head
+         のときと同じ問題)。spacerでその高さぶんを確保しておく */
+      const spacer = document.getElementById("cal-sticky-spacer");
+      if (spacer) spacer.style.height = `${rect.height}px`;
+      const gen = ++gCalSettleGen;
+      const release = () => {
+        if (gScrollFallback || gen !== gCalSettleGen) return;
+        cal.style.position = "";
+        cal.style.left = "";
+        cal.style.width = "";
+        cal.style.top = "";
+        if (spacer) spacer.style.height = "0px";
+      };
+      if ("onscrollend" in window) {
+        window.addEventListener("scrollend", release, { once: true });
+        setTimeout(release, 500);
+      } else {
+        setTimeout(release, 300);
+      }
+    }
+  }
 }
 
 function gPointerEnd() {
