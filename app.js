@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v109"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v110"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1588,7 +1588,6 @@ function renderGantt(refreshVisibility) {
       <div class="g-side">
         <div class="g-scell g-sh">タスク</div>
         <div class="g-scell g-ss">見積合計</div>
-        <div class="g-side-spacer"></div>
         ${sideRows.join("")}
       </div>
       <div class="g-track-wrap">
@@ -1600,7 +1599,6 @@ function renderGantt(refreshVisibility) {
             </div>
           </div>
         </div>
-        <div class="g-track-head-spacer"></div>
         <div class="g-scroll">
           <div style="width:${trackW}px">
             ${trackRows.join("")}
@@ -1688,7 +1686,7 @@ function measureGanttSticky() {
    計算すると、結果がほぼ0になり.wrapのtransformがヘッダーにもそのまま
    効いてしまうため) */
 function ganttNaturalDocTop(el) {
-  if (!el || el.style.position === "fixed") return null; // fixed引き渡し中は測定対象として不適切
+  if (!el) return null;
   const prevPosition = el.style.position;
   el.style.position = "static";
   const top = el.getBoundingClientRect().top + window.scrollY;
@@ -1696,9 +1694,8 @@ function ganttNaturalDocTop(el) {
   return top;
 }
 /* .cal-sticky(範囲選択ナビ)のすぐ下の位置。ヘッダー系要素のtopとして
-   updateGanttStickyHeader()とgSettleHeadFixed()の両方から参照するため
-   共通化する(値がずれるとヘッダーの吸着位置が左右/更新タイミングで
-   食い違う不具合の元になるため) */
+   updateGanttStickyHeader()が参照する(値がずれるとヘッダーの吸着位置が
+   左右/更新タイミングで食い違う不具合の元になるため一箇所に共通化する) */
 function ganttTopEdge() {
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
@@ -1724,13 +1721,6 @@ window.addEventListener("resize", () => {
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
     gFinalizeScrollFallback();
   }
-  /* 見出し行のposition:fixed引き渡し待ち(gSettleHeadFixed)がまだ残ったまま
-     measureGanttSticky()を呼ぶと、getBoundingClientRect()がfixedの絶対位置を
-     「本来の(吸着していない)位置」として測定してしまい、以後の計算全体が
-     狂う(画面ローテート直後にヘッダーがドラッグへ追随して見える不具合の
-     一因と考えられる)。測定前に必ずsticky管理下へ戻しておく */
-  gHeadSettleGen++;
-  gRevertHeadFixed();
   measureGanttSticky();
   updateGanttStickyHeader();
 });
@@ -2242,106 +2232,7 @@ let gCalStickyTop = 0; // .cal-stickyのsticky吸着位置(--fixed-hを解決し
 let gCalNaturalK = 0; // .cal-stickyの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
 let gCalBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置
 let gCalSettleGen = 0; // .cal-stickyのposition:fixed引き渡し待ちの世代カウンタ(timelineと同じ理由)
-let gHeadSettleGen = 0; // ガント表自体の見出し行(3要素)のposition:fixed引き渡し待ちの世代カウンタ
 let gWheelEndTimer = null; // マウスホイールでの疑似スクロール確定待ちタイマー
-
-/* ガント表自体の見出し行(.g-track-head/.g-side .g-scell.g-sh/.g-ss)を、
-   確定直後の短い間だけposition:fixedへ一時退避させ、scrollend(または
-   十分な待機)の後にposition:stickyへ戻す。.cal-sticky/#timeline-headと
-   全く同じ理由(ネイティブのsticky計算がスクロール位置反映の途中で一時的に
-   不安定になりうるため、その不安定な結果に依存しない絶対位置で描画する)。
-   これまでガント表自体の見出し行にはこの引き渡し処理がなく、確定の瞬間に
-   いきなりtransformを消してネイティブstickyに委ねていたため、指を離した
-   瞬間の点滅・画面ローテート後にネイティブstickyが不安定なまま次のドラッグの
-   基準値を測ってしまい追随して見える不具合の原因になっていたと考えられる */
-function gRevertHeadFixed() {
-  const box = document.getElementById("gantt");
-  if (!box) return;
-  const trackHead = box.querySelector(".g-track-head");
-  const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
-  const trackSpacer = box.querySelector(".g-track-head-spacer");
-  const sideSpacer = box.querySelector(".g-side-spacer");
-  [trackHead, headSide, sumSide].forEach((el) => {
-    if (el && el.style.position === "fixed") {
-      el.style.position = "";
-      el.style.left = "";
-      el.style.width = "";
-      el.style.top = "";
-    }
-  });
-  if (trackSpacer) trackSpacer.style.height = "0px";
-  if (sideSpacer) sideSpacer.style.height = "0px";
-}
-
-function gSettleHeadFixed(finalOffset) {
-  if (finalOffset === null) return; // 実際には動いていない(タップのみ等)ので何もしない
-  const box = document.getElementById("gantt");
-  if (!box) return;
-  const trackHead = box.querySelector(".g-track-head");
-  const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
-  const trackSpacer = box.querySelector(".g-track-head-spacer");
-  const sideSpacer = box.querySelector(".g-side-spacer");
-  const topEdge = ganttTopEdge();
-  const scrollY = window.scrollY; // window.scrollTo()直後の実際の値
-  const gen = ++gHeadSettleGen;
-  const settled = [];
-
-  if (trackHead) {
-    /* left/widthはgetBoundingClientRectで実測してよい(transformは
-       translateYのみなので水平方向には影響しない)。topだけは、この時点で
-       まだ残っているかもしれない古いtransformやネイティブstickyの
-       不安定さに影響されないよう、updateGanttStickyHeader()と同じ式で
-       独立に計算する(.cal-stickyの引き渡しと同じ考え方) */
-    const rect = trackHead.getBoundingClientRect();
-    const desired = Math.max(topEdge, ganttHeadDocTop - scrollY);
-    trackHead.style.transform = "translateY(0px)"; // fixed化中もCSSベースラインと同じ値を明示(noneに落とさない)
-    trackHead.style.position = "fixed";
-    trackHead.style.left = `${rect.left}px`;
-    trackHead.style.width = `${rect.width}px`;
-    trackHead.style.top = `${desired}px`;
-    if (trackSpacer) trackSpacer.style.height = `${rect.height}px`;
-    settled.push(trackHead);
-  }
-  let sideSpacerHeight = 0;
-  if (headSide) {
-    const rect = headSide.getBoundingClientRect();
-    const desired = Math.max(topEdge, ganttHeadSideDocTop - scrollY);
-    headSide.style.transform = "translateY(0px)";
-    headSide.style.position = "fixed";
-    headSide.style.left = `${rect.left}px`;
-    headSide.style.width = `${rect.width}px`;
-    headSide.style.top = `${desired}px`;
-    sideSpacerHeight += rect.height;
-    settled.push(headSide);
-  }
-  if (sumSide) {
-    const rect = sumSide.getBoundingClientRect();
-    const sumDesired = topEdge + ganttHeadHeight;
-    const desired = Math.max(sumDesired, ganttSumSideDocTop - scrollY);
-    sumSide.style.transform = "translateY(0px)";
-    sumSide.style.position = "fixed";
-    sumSide.style.left = `${rect.left}px`;
-    sumSide.style.width = `${rect.width}px`;
-    sumSide.style.top = `${desired}px`;
-    sideSpacerHeight += rect.height;
-    settled.push(sumSide);
-  }
-  if (sideSpacer) sideSpacer.style.height = `${sideSpacerHeight}px`;
-  if (!settled.length) return;
-
-  const release = () => {
-    if (gScrollFallback || gen !== gHeadSettleGen) return;
-    gRevertHeadFixed();
-  };
-  if ("onscrollend" in window) {
-    window.addEventListener("scrollend", release, { once: true });
-    setTimeout(release, 500);
-  } else {
-    setTimeout(release, 300);
-  }
-}
 
 function gClampScrollOffset(offset) {
   const minOffset = gScrollStartScrollY - gScrollMaxY;
@@ -2399,10 +2290,6 @@ function gBeginScrollFallback(startY) {
     gCalNaturalK = naturalTop - gScrollStartScrollY;
     gCalBaseRendered = Math.max(gCalStickyTop, gCalNaturalK);
   }
-  /* ガント表自体の見出し行も同様に、前のジェスチャーの引き渡し待ちが
-     残っていればsticky管理下に戻してから新しいジェスチャーを始める */
-  gHeadSettleGen++;
-  gRevertHeadFixed();
 }
 
 function gEngageScrollFallback(e) {
@@ -2588,10 +2475,6 @@ function gFinalizeScrollFallback() {
       }
     }
   }
-
-  /* ガント表自体の見出し行(.g-track-head/.g-side .g-scell.g-sh/.g-ss)も
-     同じ理由で一時的にposition:fixedへ退避する(gSettleHeadFixedのコメント参照) */
-  gSettleHeadFixed(finalOffset);
 }
 
 function gPointerEnd() {

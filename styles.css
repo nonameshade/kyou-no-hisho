@@ -795,10 +795,6 @@ body[data-view="gantt"] .wrap { max-width: 980px; }
 }
 .g-track-head-clip { overflow: hidden; }
 .g-track-head-inner { will-change: transform; }
-/* ドラッグ/ホイール確定直後の一瞬だけ見出し行をposition:fixedへ退避させる際、
-   通常のドキュメントフローから外れて後続要素が詰まって見えないよう、
-   その間だけ高さを確保するスペーサー(JSがheightを書き換える。普段は0px) */
-.g-track-head-spacer, .g-side-spacer { height: 0px; }
 .g-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
