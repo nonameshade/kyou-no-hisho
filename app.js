@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v119"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v120"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -596,11 +596,14 @@ function switchView(v) {
     gFinalizeScrollFallback();
   }
   if (view === "gantt" && v !== "gantt") {
-    /* #tab-headerの高さは計画タブ表示中だけJSが縮める。他タブでは常に
-       自然な高さで表示するため、離れる際は必ず元に戻す(ジェスチャーが
-       途中でなくても、畳んだ状態のまま次のタブに引き継がないように) */
+    /* #tab-headerの高さ・#tab-header-innerのtransformは計画タブ表示中だけ
+       JSが書き換える。他タブでは常に自然な表示に戻すため、離れる際は必ず
+       元に戻す(ジェスチャーが途中でなくても、畳んだ状態のまま次のタブに
+       引き継がないように) */
     const header = document.getElementById("tab-header");
     if (header) header.style.height = "";
+    const headerInner = document.getElementById("tab-header-inner");
+    if (headerInner) headerInner.style.transform = "";
   }
   /* 計画タブに入るたびに「選択日のタスクのみ表示」の対象を最新化する
      (前回タブを離れてからの変更を反映するため。タブ滞在中の個々のマーク
@@ -2147,14 +2150,21 @@ function gClampScrollTop(top) {
 }
 
 function gApplyScrollPosition(top) {
-  /* topが負の間(#tab-headerを畳んでいる途中)は#tab-headerの高さだけを
-     縮め、本体はまだ動かさない。0を超えたら#tab-headerは高さ0で固定し、
-     以降は本体側のスクロールに切り替える */
+  /* #tab-headerは計画タブ専用のもの(他タブでは常に自然な高さ)なので、
+     リサイズハンドラ経由などview!=="gantt"の状態でこの関数が呼ばれても
+     #tab-header/#tab-header-innerには触れない */
+  if (view !== "gantt") return;
+  /* topが負の間(#tab-headerを畳んでいる途中)は#tab-headerの高さを縮め、
+     本体はまだ動かさない。0を超えたら#tab-headerは高さ0で固定し、以降は
+     本体側のスクロールに切り替える。高さを縮めるだけだと中身が上端に
+     張り付いたまま下からクリップされるだけになるため、縮んだ量と同じだけ
+     #tab-header-innerをtranslateYで押し上げ、タブバー自体も一緒に上へ
+     スライドして画面上端の外へ消えていくように見せる */
   const header = document.getElementById("tab-header");
-  if (header) {
-    const collapse = Math.min(gHeaderMax, Math.max(0, top + gHeaderMax));
-    header.style.height = `${gHeaderMax - collapse}px`;
-  }
+  const headerInner = document.getElementById("tab-header-inner");
+  const collapse = Math.min(gHeaderMax, Math.max(0, top + gHeaderMax));
+  if (header) header.style.height = `${gHeaderMax - collapse}px`;
+  if (headerInner) headerInner.style.transform = `translateY(${-collapse}px)`;
   const bodyOffset = Math.max(0, top);
   /* 空文字には戻さず常にtranslateYを明示するのは、CSS側の
      transform: translateY(0px)ベースライン宣言と対になっている

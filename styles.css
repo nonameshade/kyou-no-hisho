@@ -57,6 +57,13 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
    縮める(タブバーを畳んでガント表の表示領域を広げる)。他タブでは
    常に自然な高さのまま(JSはstyle.heightを一切書き換えない) */
 #tab-header { overflow: hidden; }
+/* #tab-headerの高さを縮めるだけだと、中身(#tab-header-inner)が上端に
+   張り付いたまま下からクリップされていくだけになり、すぐ下の.cal-sticky
+   が詰めてくる動きと噛み合わず「分断されて見える」不具合があった。
+   高さの縮み量と同じだけ中身をtranslateYで押し上げることで、タブバー
+   自体も一緒に上へスライドして画面上端の外へ消えていくように見せる
+   (gApplyScrollPosition()参照) */
+#tab-header-inner { will-change: transform; }
 /* touch-action:pan-yを明示し、ブラウザ標準の横方向ジェスチャー処理に
    ゆだねず、横スワイプでのタブ切り替え(JS実装)に横方向の操作を渡す。
    .swipe-target(アーカイブスワイプ)と同じ理由 */
