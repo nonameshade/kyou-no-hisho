@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v118"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v119"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -595,10 +595,25 @@ function switchView(v) {
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
     gFinalizeScrollFallback();
   }
+  if (view === "gantt" && v !== "gantt") {
+    /* #tab-headerの高さは計画タブ表示中だけJSが縮める。他タブでは常に
+       自然な高さで表示するため、離れる際は必ず元に戻す(ジェスチャーが
+       途中でなくても、畳んだ状態のまま次のタブに引き継がないように) */
+    const header = document.getElementById("tab-header");
+    if (header) header.style.height = "";
+  }
   /* 計画タブに入るたびに「選択日のタスクのみ表示」の対象を最新化する
      (前回タブを離れてからの変更を反映するため。タブ滞在中の個々のマーク
      編集では更新しない、recomputeSelDayVisible()のコメント参照) */
   if (v === "gantt" && selDayOnly) recomputeSelDayVisible();
+  if (v === "gantt" && view !== "gantt") {
+    /* 別タブから計画タブに入るときは、#tab-headerが畳まれていない
+       (タブバーが全部見える)状態から始める。gHeaderMaxはまだ測定して
+       いないことがあるため、大きめの負の値を仮に入れておき、この後
+       renderGantt()から呼ばれるgRecalcScrollMax()で
+       -gHeaderMaxに正しくクランプされる */
+    gScrollTop = -999999;
+  }
   view = v;
   document.body.dataset.view = v;
   document.querySelectorAll(".tab").forEach((el) =>
@@ -1629,10 +1644,9 @@ function renderGantt(refreshVisibility) {
   applyGanttViewportHeight();
   /* renderGantt()はDOMを丸ごと作り直す(.g-side-body/.g-track-bodyも新しい
      要素になり、transformは初期状態=0に戻る)。gScrollTop自体は再描画をまたいで
-     保持される値なので、内容の高さが変わっていればクランプし直したうえで、
-     新しいDOMにも現在位置を明示的に反映させる */
+     保持される値なので、gRecalcScrollMax()が範囲をクランプし直したうえで
+     新しいDOMにも現在位置を反映させる(内部でgApplyScrollPosition()を呼ぶ) */
   gRecalcScrollMax();
-  gApplyScrollPosition(gScrollTop);
 }
 
 /* 日付見出し行(.g-track-head-inner)は.g-scrollの外(ネイティブstickyを
@@ -2071,12 +2085,24 @@ document.addEventListener("pointercancel", ganttDragPointerEnd);
    .g-track-body: 日付マスが並ぶ本体)だけになった。ドラッグ中は見た目だけ
    動かし、指を離したら速度に応じてJSで慣性させる。ページ全体のscrollには
    一切触れないため、window.scrollTo()も.cal-stickyのposition:fixed一時退避も
-   不要になった */
+   不要になった。
+   【v119で追加】.topbar/.tabs(#tab-header)を上にスクロールして隠す操作も、
+   この#gantt内でのドラッグに統一した(以前は#gantt外の.topbar/.tabs/
+   .cal-stickyから始まるジェスチャーをページのネイティブスクロールに任せて
+   いたが、iPhoneでは範囲が狭く操作しづらいうえ、「上の方でスワイプしたのに
+   下のガント表が反応しているように見える」という分かりにくさがあった)。
+   gScrollTopの値の範囲を0始まりではなく負の領域まで拡張し、
+   [-gHeaderMax, gScrollMaxTop] とする。gScrollTopが負の間は「#tab-header
+   を畳んでいる途中」を表し、本体(.g-side-body/.g-track-body)は動かさない。
+   0を超えたら#tab-headerは完全に畳まれた状態のまま、本体側のスクロールに
+   切り替わる(gApplyScrollPosition()参照)。1本のドラッグ/慣性で連続して
+   両方を扱えるため、境界での特別な処理は不要 */
 let gScrollPending = null; // 判定待ち { x, y }
 let gScrollFallback = false;
 let gScrollStartY = 0; // ジェスチャー開始時の指のY座標(ホイールは基準として0)
-let gScrollTop = 0; // ガント表内の仮想スクロール位置(0=一番上)。実ブラウザのscrollとは無関係
+let gScrollTop = 0; // ガント表内の仮想スクロール位置。0=#tab-header畳み終わり/本体一番上。負の値=#tab-header畳み途中
 let gScrollStartTop = 0; // ジェスチャー開始時点のgScrollTop
+let gHeaderMax = 0; // #tab-headerの自然な高さ(=畳める最大量)
 let gScrollMaxTop = 0; // 最大スクロール量(本体の全高 - 表示領域の高さ)
 let gScrollPendingTop = null; // ドラッグ中の暫定スクロール位置
 let gScrollRAF = null;
@@ -2092,34 +2118,51 @@ function applyGanttViewportHeight() {
   box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge())}px`;
 }
 
-/* 現在表示中の本体の全高・表示領域の高さから、最大スクロール量を測り直す。
-   タスクの折りたたみ・フィルタ変更・再描画・リサイズなど、内容の高さが
-   変わりうるタイミングで呼ぶ。現在位置が新しい最大値を超えていれば
-   その場でクランプし直す(内容が短くなったのに空白のまま、を防ぐ) */
+/* #tab-headerの自然な高さ(畳める最大量)を測り直す。style.heightで縮めて
+   いても、scrollHeightは(overflow:hiddenでも)本来の中身の高さを返すため、
+   一時的に戻す必要はない */
+function gMeasureHeaderMax() {
+  const header = document.getElementById("tab-header");
+  gHeaderMax = header ? header.scrollHeight : 0;
+}
+
+/* 現在表示中の本体の全高・表示領域の高さ・#tab-headerの高さから、
+   スクロール範囲を測り直す。タスクの折りたたみ・フィルタ変更・再描画・
+   リサイズなど、内容の高さが変わりうるタイミングで呼ぶ。現在位置が新しい
+   範囲からはみ出していればその場でクランプし直す(内容が短くなったのに
+   空白のまま、を防ぐ) */
 function gRecalcScrollMax() {
+  gMeasureHeaderMax();
   const trackBody = document.querySelector("#gantt .g-track-body");
   const viewport = document.querySelector("#gantt .g-scroll");
   const contentHeight = trackBody ? trackBody.offsetHeight : 0;
   const viewportHeight = viewport ? viewport.clientHeight : 0;
   gScrollMaxTop = Math.max(0, contentHeight - viewportHeight);
-  if (gScrollTop > gScrollMaxTop) {
-    gScrollTop = gScrollMaxTop;
-    gApplyScrollPosition(gScrollTop);
-  }
+  gScrollTop = gClampScrollTop(gScrollTop);
+  gApplyScrollPosition(gScrollTop);
 }
 
 function gClampScrollTop(top) {
-  return Math.max(0, Math.min(gScrollMaxTop, top));
+  return Math.max(-gHeaderMax, Math.min(gScrollMaxTop, top));
 }
 
 function gApplyScrollPosition(top) {
+  /* topが負の間(#tab-headerを畳んでいる途中)は#tab-headerの高さだけを
+     縮め、本体はまだ動かさない。0を超えたら#tab-headerは高さ0で固定し、
+     以降は本体側のスクロールに切り替える */
+  const header = document.getElementById("tab-header");
+  if (header) {
+    const collapse = Math.min(gHeaderMax, Math.max(0, top + gHeaderMax));
+    header.style.height = `${gHeaderMax - collapse}px`;
+  }
+  const bodyOffset = Math.max(0, top);
   /* 空文字には戻さず常にtranslateYを明示するのは、CSS側の
      transform: translateY(0px)ベースライン宣言と対になっている
      (noneへの切り替えを避けるため、他のtransform常時化と同じ理由) */
   const sideBody = document.querySelector("#gantt .g-side-body");
-  if (sideBody) sideBody.style.transform = `translateY(${-top}px)`;
+  if (sideBody) sideBody.style.transform = `translateY(${-bodyOffset}px)`;
   const trackBody = document.querySelector("#gantt .g-track-body");
-  if (trackBody) trackBody.style.transform = `translateY(${-top}px)`;
+  if (trackBody) trackBody.style.transform = `translateY(${-bodyOffset}px)`;
 }
 
 function gApplyScrollFallback() {
@@ -2151,12 +2194,12 @@ document.addEventListener("pointerdown", (e) => {
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
   if (e.target.closest(".overlay")) return; // 操作方法モーダル等の表示中
   if (e.target.closest("input, textarea, select")) return;
-  /* 【v117で変更】#gantt自体が専用のスクロール領域になったため、この
-     フェイクスクロールの対象は#gantt内から始まるジェスチャーだけに限定する。
-     .topbar/.tabs/.cal-sticky(#ganttの外)から始まる縦スワイプは、ページの
-     通常のネイティブスクロールに委ねる(これらの上にあるタブバーを隠す
-     ためのスクロールで、.cal-stickyはネイティブのposition:stickyだけで
-     追随するため、以前のようにJSで横取りする必要がない) */
+  /* #gantt自体が専用のスクロール領域になったため、このフェイクスクロールの
+     対象は#gantt内から始まるジェスチャーだけに限定する。.topbar/.tabsを
+     畳む操作もこの中に統合されている(gApplyScrollPosition()参照)ため、
+     .topbar/.tabs/.cal-sticky(#ganttの外)自体から始まる操作は対象外
+     (これらの領域はtouch-action: noneにしてあり、ここから始めても何も
+     起きない。「ガント表を操作する」という1つのジェスチャーに統一する) */
   if (!e.target.closest("#gantt")) return;
   if (gScrollFallback) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
@@ -2209,11 +2252,10 @@ document.addEventListener("touchmove", (e) => {
 }, { passive: false });
 
 /* マウスホイール(Windows等)によるスクロールも、指でのスワイプと同じJS管理の
-   縦フェイクスクロールに乗せる。#gantt自体が専用のスクロール領域になった
-   ため、#gantt内から始まるホイール操作だけを対象にする(ページ側の通常の
-   スクロールは.topbar/.tabs/.cal-stickyの表示/非表示にネイティブで任せる)。
-   ホイールには指のような明確な「開始/終了」がないため、イベントが一定時間
-   (150ms)途切れた時点でスクロールが止まったとみなして確定させる */
+   縦フェイクスクロールに乗せる。#gantt内から始まるホイール操作だけを対象に
+   する(pointerdownの理由と同じ)。ホイールには指のような明確な
+   「開始/終了」がないため、イベントが一定時間(150ms)途切れた時点で
+   スクロールが止まったとみなして確定させる */
 document.addEventListener("wheel", (e) => {
   if (view !== "gantt") return;
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中

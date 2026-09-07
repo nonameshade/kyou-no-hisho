@@ -53,6 +53,10 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
 .hidden { display: none !important; }
 
 /* ---------- ヘッダー ---------- */
+/* 計画タブ表示中だけ、#gantt内でのドラッグに連動してこの高さをJSが
+   縮める(タブバーを畳んでガント表の表示領域を広げる)。他タブでは
+   常に自然な高さのまま(JSはstyle.heightを一切書き換えない) */
+#tab-header { overflow: hidden; }
 /* touch-action:pan-yを明示し、ブラウザ標準の横方向ジェスチャー処理に
    ゆだねず、横スワイプでのタブ切り替え(JS実装)に横方向の操作を渡す。
    .swipe-target(アーカイブスワイプ)と同じ理由 */
@@ -446,12 +450,12 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 6;
   background: var(--bg);
   display: flow-root;
-  /* 【v117で変更】以前は縦方向もJS管理のフェイクスクロールに含めていたため
-     touch-action: noneにしていたが、#gantt自体が専用のスクロール領域に
-     なったことで.cal-stickyはページの通常のネイティブスクロールに委ねる
-     単純なsticky要素に戻ったため、ネイティブの縦scrollを妨げないよう
-     pan-yに戻した(.cal-nav等、他の.cal-sticky配下要素と同じ値) */
-  touch-action: pan-y;
+  /* 【v119で再変更】.topbar/.tabs(#tab-header)を畳む操作は#gantt内での
+     ドラッグに統一したため(#gantt自身のコメント参照)、.cal-sticky自体は
+     もうページのネイティブスクロールを必要としない(ページ自体は常に
+     スクロール位置0のまま)。誤って中途半端なネイティブスクロールが
+     発生しないよう、他の(JSが全面的に処理する)要素と同じくnoneにする */
+  touch-action: none;
 }
 #cal-gap-cover {
   display: none;
@@ -464,6 +468,15 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 5;
 }
 body[data-view="gantt"] #cal-gap-cover { display: block; }
+/* .topbar/.tabs(#tab-header)を畳む操作は#gantt内でのドラッグに統一した
+   ため、この2つの領域自体でのネイティブスクロールは不要。誤って中途半端な
+   ネイティブスクロールが発生しないようnoneにする(#gantt内でのドラッグ中に
+   指がこの領域に重なっても、ここが起点でない限りネイティブ操作は起きない) */
+body[data-view="gantt"] .topbar,
+body[data-view="gantt"] .tabs,
+body[data-view="gantt"] #fixedbars {
+  touch-action: none;
+}
 .cal-nav {
   display: flex;
   justify-content: space-between;
