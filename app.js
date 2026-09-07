@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v114"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v115"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2431,7 +2431,13 @@ function gFinalizeScrollFallback() {
       finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
       window.scrollTo(0, gScrollStartScrollY - finalOffset);
     }
-    wrap.style.transform = "";
+    /* 【診断用・一時的にコメントアウト】通常はここで.wrapのtransformを
+       解除するが、Codexの提案で「ネイティブスクロールの反映が完了する前に
+       transformされた祖先からstickyを解放していること」が1フレームだけ
+       ヘッダーが欠ける不具合の直接原因かどうかを切り分けるため、あえて
+       解除しない状態を一時的に作る(見た目はずれたままになる。これは
+       修正ではなく診断専用) */
+    // wrap.style.transform = "";
   }
   gScrollPendingY = null;
   updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
