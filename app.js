@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v112"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v113"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2435,7 +2435,28 @@ function gFinalizeScrollFallback() {
   }
   gScrollPendingY = null;
   updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
+  /* ↑ここまでは全てtransformの書き換えのみでレイアウトに影響しないため、
+     window.scrollTo()/.wrapのtransform解除と同じ同期処理のままにしておく */
+  const cal = document.querySelector(".cal-sticky");
+  if (cal) cal.style.transform = "";
 
+  /* .cal-stickyのposition:fixedへの切り替え(position/spacerの高さ変更を
+     伴う、レイアウトに影響する重い変更)だけは、次の描画フレームまで1コマ
+     遅らせる。Performanceパネルでの実機調査で、window.scrollTo()直後の
+     同じ同期処理の中でこの切り替えまで行っていると、ちょうど1フレームだけ
+     ガント見出し行が欠けて描画される(Paint flashingで他のコンテンツより
+     見出し行の再描画が遅れて別に光る現象と一致)ことが分かったため、
+     スクロール位置の変更をブラウザが先に合成し終える猶予を与える狙い。
+     transformだけの軽い変更(上のupdateGanttStickyHeader()やcalのtransform
+     クリア)は据え置き、レイアウトに影響する重い変更だけを遅らせることで、
+     ヘッダー自身が1フレームだけ古いtransformのまま取り残されて位置がずれる、
+     という新たな不具合を生まないようにしている */
+  if (finalOffset !== null) {
+    requestAnimationFrame(() => gFinalizeCalSettle(finalOffset));
+  }
+}
+
+function gFinalizeCalSettle(finalOffset) {
   /* .cal-stickyはネイティブsticky。#timeline-headと同じ理由(ネイティブの
      sticky計算がスクロール位置反映の途中で一時的に不安定になりうる)で、
      確定直後の短い間だけJS管理のposition:fixedに切り替えてネイティブの
@@ -2446,38 +2467,33 @@ function gFinalizeScrollFallback() {
      ように悪化したため元に戻した。この処理は点滅の原因ではなく、むしろ
      発生範囲を限定する側に働いていたと考えられる) */
   const cal = document.querySelector(".cal-sticky");
-  if (cal) {
-    if (finalOffset === null) {
-      cal.style.transform = "";
-    } else {
-      const rect = cal.getBoundingClientRect();
-      const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
-      cal.style.transform = "";
-      cal.style.position = "fixed";
-      cal.style.left = `${rect.left}px`;
-      cal.style.width = `${rect.width}px`;
-      cal.style.top = `${desired}px`;
-      /* position:fixedにすると通常のドキュメントフローから外れ、それまで.cal-sticky
-         が占めていた分の高さが消えて後続要素(#gantt)が詰まって見える(#timeline-head
-         のときと同じ問題)。spacerでその高さぶんを確保しておく */
-      const spacer = document.getElementById("cal-sticky-spacer");
-      if (spacer) spacer.style.height = `${rect.height}px`;
-      const gen = ++gCalSettleGen;
-      const release = () => {
-        if (gScrollFallback || gen !== gCalSettleGen) return;
-        cal.style.position = "";
-        cal.style.left = "";
-        cal.style.width = "";
-        cal.style.top = "";
-        if (spacer) spacer.style.height = "0px";
-      };
-      if ("onscrollend" in window) {
-        window.addEventListener("scrollend", release, { once: true });
-        setTimeout(release, 500);
-      } else {
-        setTimeout(release, 300);
-      }
-    }
+  if (!cal) return;
+  const rect = cal.getBoundingClientRect();
+  const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
+  cal.style.transform = "";
+  cal.style.position = "fixed";
+  cal.style.left = `${rect.left}px`;
+  cal.style.width = `${rect.width}px`;
+  cal.style.top = `${desired}px`;
+  /* position:fixedにすると通常のドキュメントフローから外れ、それまで.cal-sticky
+     が占めていた分の高さが消えて後続要素(#gantt)が詰まって見える(#timeline-head
+     のときと同じ問題)。spacerでその高さぶんを確保しておく */
+  const spacer = document.getElementById("cal-sticky-spacer");
+  if (spacer) spacer.style.height = `${rect.height}px`;
+  const gen = ++gCalSettleGen;
+  const release = () => {
+    if (gScrollFallback || gen !== gCalSettleGen) return;
+    cal.style.position = "";
+    cal.style.left = "";
+    cal.style.width = "";
+    cal.style.top = "";
+    if (spacer) spacer.style.height = "0px";
+  };
+  if ("onscrollend" in window) {
+    window.addEventListener("scrollend", release, { once: true });
+    setTimeout(release, 500);
+  } else {
+    setTimeout(release, 300);
   }
 }
 
