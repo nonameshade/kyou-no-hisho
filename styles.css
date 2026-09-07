@@ -545,19 +545,25 @@ body[data-view="gantt"] #fixedbars {
 }
 
 /* ---------- ガント(フェーズ3c) ---------- */
-body[data-view="gantt"] .wrap { max-width: 980px; }
+/* FAB(タスクを追加ボタン)のクリアランスは.g-track-body/.g-side-body自身の
+   padding-bottomで確保している(内部スクロールの最後で必要になるため)ので、
+   計画タブでは.wrap自体の下端パディングは不要(#gantt自体が画面の残り高さ
+   ぴったりに収まるようにするため0にする) */
+body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 
-/* overflow-x:autoを指定すると(overflow-yを指定していなくても)#gantt自身が
-   スクロールコンテナになり、.g-side(タスク名列)がその子孫である以上、
-   position:stickyの基準がビューポートではなく#gantt自身になってしまう
-   (ネイティブstickyが効かなくなるのと同じ理由で、期待した位置からずれる)。
-   横スクロールは子の.g-scroll側に既にoverflow-x:autoがあり、#gantt自身に
-   持たせる必要はないため外す(角丸のクリップが効かなくなる副作用はあるが、
-   タスク名列の固定位置がずれる方が実害が大きいため許容する) */
+/* #gantt自体を画面の残り高さに固定された表示領域にする(高さはJSの
+   applyGanttViewportHeight()が算出してstyle.heightに書き込む)。以前は
+   ページ全体をスクロールする設計だったため#ganttに高さの制限を持たせず、
+   overflowも(position:stickyの基準がずれるのを避けるため)持たせていな
+   かったが、見出し行がネイティブstickyを使わない構造に作り直したことで
+   その制約がなくなった。overflow:hiddenにすることで角丸のクリップも
+   自然に効くようになる */
 #gantt {
   background: var(--surface);
   border-radius: 14px;
   border: 1px solid var(--line);
+  overflow: hidden;
+  position: relative;
 }
 .g-inner { display: inline-block; min-width: 100%; }
 .g-row { display: flex; border-top: 1px solid #EEF1F4; }
@@ -748,11 +754,14 @@ body[data-view="gantt"] .wrap { max-width: 980px; }
 .target-row .sbtn { flex-shrink: 0; }
 
 /* ---------- フェーズ5:2ペインガント・予備日・ドラッグ ---------- */
-.g-wrap2 { display: flex; align-items: stretch; }
+.g-wrap2 { display: flex; align-items: stretch; height: 100%; }
 /* touch-action:pan-xで縦方向のネイティブスクロールを無効にし、JS実装の
    縦フェイクスクロール(gScrollFallback、ネイティブの慣性スクロール中の
    JS実行遅延によるヘッダーのちらつき/追随遅れを避けるため)に横取りさせる。
-   横方向のネイティブpanはそのまま許可し、.g-scrollの横スクロールは従来通り */
+   横方向のネイティブpanはそのまま許可し、.g-scrollの横スクロールは従来通り。
+   display:flex; flex-direction:columnで「見出しセル(固定高さ)+本体
+   (残り全部)」の縦積みにする。overflow:hiddenで本体側(.g-side-body)の
+   はみ出しをここで切り抜く */
 .g-side {
   width: 170px;
   min-width: 170px;
@@ -760,45 +769,51 @@ body[data-view="gantt"] .wrap { max-width: 980px; }
   background: var(--surface);
   z-index: 2;
   touch-action: pan-x;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+.g-side .g-scell.g-sh, .g-side .g-scell.g-ss { flex-shrink: 0; }
 .g-track-wrap {
   flex: 1;
   min-width: 0; /* flexアイテム内で子のoverflow-xを効かせる定番の指定 */
   position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-/* 日付見出し行・見積合計行は、横スクロール領域(.g-scroll)の外に置き、
-   ネイティブのposition:stickyで縦方向を固定する(.g-side側と同じ理由)。
-   横スクロールに合わせた位置合わせはsyncGanttTrackHeadX()がJSで行う
-   (.g-track-head-innerにtranslateXを当てる)。
-   stickyの計算対象(.g-track-head)自身にはoverflowを一切持たせず、
-   はみ出し切り抜き用のoverflow:hiddenは子の.g-track-head-clipに分離する。
-   同一要素にposition:stickyとoverflowを併用すると、ブラウザや発生条件に
-   よってはstickyの固定が不安定になる(スクロール中に追随してしまう/
-   点滅する)ことが実機検証で確認されたため、この分離で回避する */
+/* 日付見出し行・見積合計行。以前はネイティブのposition:stickyで縦方向を
+   固定していたが、#gantt自体が画面の残り高さに固定された表示領域になり
+   (#ganttのコメント参照)、ページ自体がスクロールしなくなったため、
+   sticky/JSのtransformどちらも不要な単純な要素になった。指でのフェイク
+   スクロール中も一切動かない(動かす対象は.g-track-body、下記)。
+   常時box-shadowを付けているのは、以前は「浮いている(floating)」状態
+   だけに付けていたものを、常にこの状態と同義になったため単純化した */
 .g-track-head {
-  position: sticky;
-  top: var(--gantt-head-top, 0px);
-  z-index: 4;
   background: var(--surface);
-  will-change: transform;
-  /* #timeline-headと同じ「常時何もしないtransformを持たせておく」対策。
-     will-change:transformだけではJSがstyle.transformを空文字に戻した瞬間
-     computed transformがnoneになるのを防げない(will-change自体は合成レイヤーの
-     ヒントであって代替のtransform値にはならない)。#timeline-headはCSSで
-     transform: translateY(0px)を宣言しているため、JS側でstyle.transformを
-     空文字に戻すとこのCSS宣言に落ちてtranslateY(0px)のまま維持される
-     (noneには絶対にならない)。ガント表側のこの3要素にはこの宣言がなく、
-     空文字に戻すとcomputed transformがnoneになって合成レイヤー/スタッキング
-     コンテキストが生成・破棄され、それが点滅・はみ出しの一因だったと考えられる
-     ため、JS側も含めtranslateY(0px)を明示し続けるように統一する */
-  transform: translateY(0px);
+  box-shadow: 0 3px 8px rgba(23,33,43,.12);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 .g-track-head-clip { overflow: hidden; }
 .g-track-head-inner { will-change: transform; }
 .g-scroll {
+  flex: 1;
+  min-height: 0; /* flexアイテム内で子のoverflow-yを効かせる、min-width:0と同じ理由の定番指定 */
   overflow-x: auto;
+  overflow-y: hidden; /* 縦方向はJS管理のフェイクスクロールのみに任せ、ネイティブスクロールは無効にする */
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x;
+}
+/* 指でのフェイクスクロール中、実際にtransformで動かす本体側の要素。
+   見出し行(.g-track-head、上記)はこれとは別に固定されたまま動かない。
+   最後の行がFAB(タスクを追加ボタン)の裏に隠れたままにならないよう、
+   下端に余白を確保しておく(.wrapの下端パディングと同じ理由) */
+.g-track-body {
+  will-change: transform;
+  transform: translateY(0px); /* noneへの切り替えを避けるため常時transformを持たせる(他要素と同じ理由) */
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 .g-scell {
   height: 34px;
@@ -1298,38 +1313,33 @@ input[type="date"], input[type="time"] {
 .swipe-action { visibility: hidden; }
 .swipe-wrap.show-action .swipe-action { visibility: visible; }
 
-/* 日付ヘッダーの上部固定(浮いているときの見た目)。
-   右側(日付トラック)は日付見出し行・見積合計行をまとめた.g-track-head
-   自体がネイティブのposition:stickyで固定される(.g-track-headのコメント
-   参照。横スクロール領域の.g-scrollから外に出してあるため祖先に
-   overflowを持つ要素がなくネイティブstickyが使える)。.g-trow.g-sh/.g-ss
-   自身はその中の普通のコンテンツなので特別な指定は不要。
-   左側(タスク名列)は.g-scell.g-sh/.g-ssそれぞれが個別にネイティブ
-   position:stickyを使う(見出し行・見積合計行で吸着位置が異なるため)。
-   ネイティブstickyはブラウザのコンポジタが直接計算するため、JSの
-   requestAnimationFrameがアクティブなスクロール中に間引かれる
-   (ちらつき/ヘッダーが一瞬消える不具合の原因)影響を受けない。
-   --gantt-head-topはupdateGanttStickyHeader()がJS側の計算結果と揃えて
-   同期する。指でのドラッグ中(gScrollFallback)は.wrapのtransformに
-   巻き込まれるため、その間だけ.cal-stickyと同じ理由でJS計算のtransform
-   を上乗せする(ドラッグ終了後はネイティブに戻す) */
-.g-side .g-scell.g-sh {
-  position: sticky;
-  top: var(--gantt-head-top, 0px);
-  z-index: 4;
+/* 左側(タスク名列)の見出しセル。.g-track-headと同じ理由で、以前はネイティブ
+   position:stickyを使っていたが、#gantt自体が画面の残り高さに固定された
+   表示領域になったため不要になった(#gantt/.g-track-headのコメント参照)。
+   .g-scell.g-ss(見積合計)はflex-direction:columnの中で.g-scell.g-shの
+   すぐ下に自然に並ぶため、以前のcalc(var(--gantt-head-top)+var(--gantt-head-
+   height))のような位置計算も不要になった */
+.g-side .g-scell.g-sh, .g-side .g-scell.g-ss {
   background: var(--surface);
-  will-change: transform;
-  transform: translateY(0px); /* .g-track-headと同じ理由(常時transformを持たせておく) */
+  box-shadow: 0 3px 8px rgba(23,33,43,.12);
+  position: relative;
+  z-index: 1;
 }
-.g-side .g-scell.g-ss {
-  position: sticky;
-  top: calc(var(--gantt-head-top, 0px) + var(--gantt-head-height, 32px));
-  z-index: 4;
-  background: var(--surface);
+/* .g-scrollと同じ役割の、動かない切り抜き用ビューポート。実際にtransformで
+   動かすのは中の.g-side-body(下記)であり、.g-side-clip自身は一切動かない
+   (この2要素を1つにまとめると、クリップ範囲と中身が一緒に動いてしまい
+   スクロールしても何も動いて見えなくなる。.g-scroll/.g-track-bodyの
+   分離と同じ理由で必ず分ける) */
+.g-side-clip {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+/* 指でのフェイクスクロール中、実際にtransformで動かす本体側の要素
+   (タスク行の一覧)。.g-track-bodyと同じ理由・同じ下端余白 */
+.g-side-body {
   will-change: transform;
   transform: translateY(0px);
-}
-.g-track-head.floating, .g-side .g-scell.g-sh.floating,
-.g-side .g-scell.g-ss.floating {
-  box-shadow: 0 3px 8px rgba(23,33,43,.12);
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }

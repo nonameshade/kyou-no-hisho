@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v116"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v117"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -588,7 +588,7 @@ function progressOf(t) {
 /* ---------- 画面切替 ---------- */
 function switchView(v) {
   /* 計画タブでの縦フェイクスクロール/慣性が終わらないまま別タブへ切り替えると、
-     .wrapのtransformが新しいタブの内容に残ったままになってしまうため、
+     .g-side-body/.g-track-bodyのtransformが動いたまま残ってしまうため、
      切り替え前に確定させておく */
   if (view === "gantt" && v !== "gantt" && (gScrollFallback || gMomentumRAF)) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
@@ -607,13 +607,18 @@ function switchView(v) {
   document.getElementById("view-today").classList.toggle("hidden", v !== "today");
   document.getElementById("view-gantt").classList.toggle("hidden", v !== "gantt");
   document.getElementById("view-plan").classList.toggle("hidden", v !== "plan");
+  /* タブボタンを直接タップした場合(スワイプでのタブ切り替えは別途
+     window.scrollTo(0,0)している)もページのスクロール位置を一番上に戻す。
+     計画タブは#gantt自体が画面の残り高さぶんの固定表示領域になっており、
+     .cal-stickyのすぐ下から始まる前提で高さを計算しているため、切り替え前の
+     タブでページが下にスクロールされたままだと表示が崩れて見える */
+  window.scrollTo(0, 0);
   /* #fixedbars(タイマーバナーの表示/非表示で高さが変わりうる)の高さを
-     確定させてからrenderAll()を呼ぶ。順序が逆だと、計画タブのガント見出しの
-     固定位置(#fixedbarsの高さを基準に計算)が古い高さで計算されてしまい、
-     直後のスクロールで正しい位置へ動いて見える不具合になる */
+     確定させてからrenderAll()を呼ぶ。順序が逆だと、計画タブの#gantt自身の
+     高さ(#fixedbars等の高さを基準に画面の残り高さとして算出する)が
+     古い高さで計算されてしまう */
   updateMiniTimer();
   renderAll();
-  if (v === "gantt") startGanttStickyLoop();
 }
 
 /* ---------- 描画:共通ヘッダー ---------- */
@@ -1588,7 +1593,11 @@ function renderGantt(refreshVisibility) {
       <div class="g-side">
         <div class="g-scell g-sh">タスク</div>
         <div class="g-scell g-ss">見積合計</div>
-        ${sideRows.join("")}
+        <div class="g-side-clip">
+          <div class="g-side-body">
+            ${sideRows.join("")}
+          </div>
+        </div>
       </div>
       <div class="g-track-wrap">
         <div class="g-track-head">
@@ -1600,7 +1609,7 @@ function renderGantt(refreshVisibility) {
           </div>
         </div>
         <div class="g-scroll">
-          <div style="width:${trackW}px">
+          <div class="g-track-body" style="width:${trackW}px">
             ${trackRows.join("")}
           </div>
         </div>
@@ -1617,8 +1626,13 @@ function renderGantt(refreshVisibility) {
      一度だけ明示的に揃えておく(以後はsyncGanttTrackHeadX()が
      .g-scrollのscrollイベントで追随させる) */
   syncGanttTrackHeadX();
-  measureGanttSticky();
-  updateGanttStickyHeader();
+  applyGanttViewportHeight();
+  /* renderGantt()はDOMを丸ごと作り直す(.g-side-body/.g-track-bodyも新しい
+     要素になり、transformは初期状態=0に戻る)。gScrollTop自体は再描画をまたいで
+     保持される値なので、内容の高さが変わっていればクランプし直したうえで、
+     新しいDOMにも現在位置を明示的に反映させる */
+  gRecalcScrollMax();
+  gApplyScrollPosition(gScrollTop);
 }
 
 /* 日付見出し行(.g-track-head-inner)は.g-scrollの外(ネイティブstickyを
@@ -1637,204 +1651,30 @@ function syncGanttTrackHeadX() {
   if (box) box.addEventListener("scroll", syncGanttTrackHeadX, true);
 }
 
-/* #gantt本体の文書上の位置と日付ヘッダー行の高さは、レイアウトが変わらない
-   限り毎フレーム測り直す必要がない。getBoundingClientRect()/offsetHeightは
-   呼ぶたびに同期的なレイアウト計算を強制するため、rAFループの中で毎回
-   呼ぶとメインスレッドの処理が重くなり、iOSの慣性スクロール中に読み取る
-   スクロール位置が実際の描画から遅れる一因になっていた可能性がある。
-   そこで測定はレイアウトが変わりうるタイミング(再描画・リサイズ)だけで
-   行い、毎フレームの処理はwindow.scrollYを使った軽い算術計算だけにする */
-let ganttBoxDocTop = 0;
-let ganttBoxDocHeight = 0;
-let ganttHeadHeight = 0;
-let ganttHeadDocTop = 0; // .g-track-head(右側、日付トラック側の見出し全体)の自然な位置
-let ganttHeadSideDocTop = 0; // .g-side .g-scell.g-sh(左側、タスク名列)の自然な位置
-let ganttSumHeight = 0;
-let ganttSumSideDocTop = 0;
-function measureGanttSticky() {
-  const box = document.getElementById("gantt");
-  if (!box) return;
-  const trackHead = box.querySelector(".g-track-head");
-  const headRow = box.querySelector(".g-trow.g-sh");
-  const sumRow = box.querySelector(".g-trow.g-ss");
-  const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
-  const r = box.getBoundingClientRect();
-  ganttBoxDocTop = r.top + window.scrollY;
-  ganttBoxDocHeight = r.height;
-  ganttHeadHeight = headRow ? headRow.offsetHeight : 0;
-  ganttSumHeight = sumRow ? sumRow.offsetHeight : 0;
-  /* 右側(日付トラック)は.g-trow.g-sh/.g-ssをまとめて.g-track-head(ネイティブ
-     position:sticky)1つで固定するようになったため、.g-track-head自身の
-     自然な位置を測る。左側(タスク名列)は.g-scell.g-sh/.g-ssそれぞれが
-     個別にネイティブstickyのため、両方を個別に測る(自然位置が完全に
-     一致する保証はなく、実際わずかにずれてタスク行の文字がヘッダーの上に
-     はみ出して見える不具合の原因になっていた) */
-  ganttHeadDocTop = ganttNaturalDocTop(trackHead) ?? ganttBoxDocTop;
-  ganttHeadSideDocTop = ganttNaturalDocTop(headSide) ?? ganttHeadDocTop;
-  ganttSumSideDocTop = ganttNaturalDocTop(sumSide) ?? ganttHeadSideDocTop + ganttHeadHeight;
-}
-
-/* position:stickyで既に吸着中の要素は、getBoundingClientRect().topが
-   「吸着位置」を返してしまい、「本来の(吸着していない)自然位置」を正しく
-   測れない(ページを途中までスクロールした状態で計画タブを開く/再描画される
-   と、この時点で既に吸着済みのことがある)。.cal-sticky/#timeline-headの
-   自然位置測定と全く同じ手法で、一時的にposition:staticへ切り替えて実測
-   してから元に戻す(同期的に戻すため見た目のちらつきは出ない)。この誤測定は
-   画面ローテート後に次のドラッグでヘッダーが指に追随して見える不具合の
-   直接原因だったと考えられる(誤ったganttHeadDocTop等を基準に打ち消し量を
-   計算すると、結果がほぼ0になり.wrapのtransformがヘッダーにもそのまま
-   効いてしまうため) */
-function ganttNaturalDocTop(el) {
-  if (!el) return null;
-  const prevPosition = el.style.position;
-  el.style.position = "static";
-  const top = el.getBoundingClientRect().top + window.scrollY;
-  el.style.position = prevPosition;
-  return top;
-}
-/* .cal-sticky(範囲選択ナビ)のすぐ下の位置。ヘッダー系要素のtopとして
-   updateGanttStickyHeader()が参照する(値がずれるとヘッダーの吸着位置が
-   左右/更新タイミングで食い違う不具合の元になるため一箇所に共通化する) */
+/* .cal-sticky(範囲選択ナビ)のすぐ下の位置。#gantt自身の高さ
+   (applyGanttViewportHeight())の算出に使う(画面の残り高さ=画面全体の高さ
+   - この値) */
 function ganttTopEdge() {
   const bars = document.getElementById("fixedbars");
   const nav = document.querySelector(".cal-sticky");
   const navTop = nav ? parseFloat(getComputedStyle(nav).top) || 0 : 0;
-  /* offsetHeightは整数に丸められる(端数切り捨て/丸め)ため、.cal-stickyの
-     実際の高さが端数を持つ場合に最大1px前後の誤差が生じ、ヘッダーが
-     本来より下にずれて隙間からタスク行がはみ出して見える一因になっていた。
-     getBoundingClientRect().heightは小数点まで正確な値を返す */
   return nav ? navTop + nav.getBoundingClientRect().height : (bars ? bars.getBoundingClientRect().height : 0);
 }
 
 window.addEventListener("resize", () => {
   /* DevToolsのスマホ/PC表示切り替え等でリサイズが発生すると、進行中の
      ポインタ操作にpointerup/pointercancelが届かないまま終わることがあり、
-     gScrollFallbackがtrueに固定されたままになる。この場合
-     updateGanttStickyHeader()のscrollYOverrideなし呼び出しは全て無視
-     されてしまい(gApplyScrollFallback側の計算と競合させないための
-     ガード)、右側の見出し行が更新されなくなる(固定されなくなったように
-     見える)。リサイズ時は進行中のフェイクスクロールを強制的に確定させ、
-     状態が固定化されないようにする */
+     gScrollFallbackがtrueに固定されたままになる不具合があった。リサイズ時は
+     進行中のフェイクスクロールを強制的に確定させ、状態が固定化されない
+     ようにする */
   if (gScrollFallback) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
     gFinalizeScrollFallback();
   }
-  measureGanttSticky();
-  updateGanttStickyHeader();
+  applyGanttViewportHeight();
+  gRecalcScrollMax();
 });
-
-/* 縦スクロール時、日付ヘッダー行を画面上部に貼り付ける。
-   scrollYOverrideを渡すと、実際のwindow.scrollYの代わりにその値で計算する
-   (gApplyScrollFallback()が指のフェイクスクロール中に使う) */
-function updateGanttStickyHeader(scrollYOverride) {
-  if (view !== "gantt") return;
-  /* フェイクスクロール中(gScrollFallback)は実スクロール位置(window.scrollY)が
-     まだ動いていないため、scrollYOverride無しでの呼び出し(scrollイベント/
-     ganttStickyLoopの毎フレーム呼び出し)は無視する。放置するとgApplyScroll
-     Fallback()側の(正しい)計算と同じフレーム内で競合し、見出し行が毎フレーム
-     2つの異なる値の間で揺れ動いてしまう */
-  if (scrollYOverride === undefined && gScrollFallback) return;
-  const box = document.getElementById("gantt");
-  if (!box) return;
-  const trackHead = box.querySelector(".g-track-head");
-  const headSide = box.querySelector(".g-side .g-scell.g-sh");
-  const sumSide = box.querySelector(".g-side .g-scell.g-ss");
-  if (!trackHead || !headSide) return;
-  const topEdge = ganttTopEdge();
-  /* .g-track-head/.g-side側のネイティブposition:stickyが参照する目標値。
-     ドラッグの有無にかかわらず常に最新化しておく。--gantt-head-heightは
-     見積合計行(.g-ss)がすぐ下に連なる位置を計算するのに使う(CSS側で
-     32pxと決め打ちしない) */
-  document.documentElement.style.setProperty("--gantt-head-top", `${topEdge}px`);
-  document.documentElement.style.setProperty("--gantt-head-height", `${ganttHeadHeight}px`);
-  const scrollY = scrollYOverride !== undefined ? scrollYOverride : window.scrollY;
-  const rectTop = ganttBoxDocTop - scrollY;
-  const rectBottom = rectTop + ganttBoxDocHeight;
-  /* 「浮かせるかどうか」の判定は#gantt自体の矩形(rectTop/rectBottom)で行うが、
-     実際に浮かせる位置は各要素自身の自然な位置を基準に計算する。#gantt
-     には1pxの枠線があり中の行はその内側から始まるため、#gantt自身の
-     矩形をそのまま基準にすると数px分ずれてしまう */
-  const combinedHeight = ganttHeadHeight + ganttSumHeight;
-  const floating = rectTop < topEdge && rectBottom > topEdge + combinedHeight + 40;
-  /* 右側(日付トラック)は日付見出し行・見積合計行をまとめた.g-track-head
-     1つがネイティブのposition:stickyで固定される(.g-scrollの横スクロール
-     に巻き込まれないよう.g-scrollの外に出してある)。左側(タスク名列)も
-     ネイティブのposition:stickyに任せるのが基本。ただし指でのドラッグ中
-     (gScrollFallback、scrollYOverrideありで呼ばれる)だけは.wrapの
-     transformに巻き込まれてしまうため、.cal-stickyと同じ理由でJS計算の
-     transformを一時的に上乗せする。ドラッグ以外(ネイティブscrollイベント・
-     ganttStickyLoopの毎フレーム呼び出し)ではtransformを空にしてネイティブ
-     の計算に完全に委ね、iOSやChromeがアクティブなスクロール中に
-     requestAnimationFrameを間引く(ヘッダーが一瞬消える不具合の原因と
-     考えられる)影響を受けないようにする。
-     ネイティブstickyはドラッグ中も実スクロール位置(gScrollStartScrollYで
-     固定されたまま)を基準に計算され続けるため、その「素の描画位置」
-     (baseRendered、吸着していればtopEdge・していなければ自然位置)と
-     .wrapのtransform量(wrapOffset)の両方を打ち消してから、あらためて
-     現在(フェイクスクロール後)の目標位置に合わせる。.cal-stickyの
-     打ち消し式と同じ考え方 */
-  const wrapOffset = scrollYOverride !== undefined ? gScrollStartScrollY - scrollY : 0;
-
-  const headNaturalTop = ganttHeadDocTop - scrollY;
-  let trackOffset = 0;
-  if (scrollYOverride !== undefined) {
-    const trackBaseRendered = Math.max(topEdge, ganttHeadDocTop - gScrollStartScrollY);
-    const trackDesired = Math.max(topEdge, headNaturalTop);
-    trackOffset = trackDesired - trackBaseRendered - wrapOffset;
-  }
-  /* trackOffsetはドラッグ中(scrollYOverrideあり)以外は0のまま(上のif文参照)。
-     transformを空文字に戻さず常にtranslateYを明示するのは、CSS側の
-     transform: translateY(0px)ベースライン宣言と対になっている
-     (.g-track-headのコメント参照。noneへの切り替えを避けるため) */
-  trackHead.style.transform = `translateY(${trackOffset}px)`;
-  trackHead.classList.toggle("floating", floating);
-
-  const headSideNaturalTop = ganttHeadSideDocTop - scrollY;
-  let offsetSide = 0;
-  if (scrollYOverride !== undefined) {
-    const headSideBaseRendered = Math.max(topEdge, ganttHeadSideDocTop - gScrollStartScrollY);
-    const headSideDesired = Math.max(topEdge, headSideNaturalTop);
-    offsetSide = headSideDesired - headSideBaseRendered - wrapOffset;
-  }
-  headSide.style.transform = `translateY(${offsetSide}px)`;
-  headSide.classList.toggle("floating", floating);
-
-  if (sumSide) {
-    const sumDesired = topEdge + ganttHeadHeight; // 見出し行のすぐ下
-    const sumSideNaturalTop = ganttSumSideDocTop - scrollY;
-    let sumOffsetSide = 0;
-    if (scrollYOverride !== undefined) {
-      const sumSideBaseRendered = Math.max(sumDesired, ganttSumSideDocTop - gScrollStartScrollY);
-      const sumSideDesired = Math.max(sumDesired, sumSideNaturalTop);
-      sumOffsetSide = sumSideDesired - sumSideBaseRendered - wrapOffset;
-    }
-    sumSide.style.transform = `translateY(${sumOffsetSide}px)`;
-    sumSide.classList.toggle("floating", floating);
-  }
-}
-
-window.addEventListener("scroll", () => {
-  requestAnimationFrame(updateGanttStickyHeader);
-}, { passive: true });
-
-/* scrollイベントだけに頼ると、iOSの慣性スクロール中はイベント発火が実際の
-   描画に対して遅延/まとめ打ちされることがあり、見出し行が本来の位置を
-   一瞬追い越してから遅れて補正される(ちらつき/ジャンプに見える)ことが
-   あった。計画タブを表示している間は毎フレーム無条件に位置を再計算する
-   ことで、scrollイベントのタイミングに依存しないようにする */
-let ganttStickyLoopActive = false;
-function ganttStickyLoop() {
-  if (view !== "gantt") { ganttStickyLoopActive = false; return; }
-  updateGanttStickyHeader();
-  requestAnimationFrame(ganttStickyLoop);
-}
-function startGanttStickyLoop() {
-  if (ganttStickyLoopActive) return;
-  ganttStickyLoopActive = true;
-  requestAnimationFrame(ganttStickyLoop);
-}
 
 /* マスのタップ:空→●実施→○予備→空(周期タスクは自動予定のオン/オフ) */
 function toggleCell(taskId, dk) {
@@ -2205,59 +2045,88 @@ document.addEventListener("pointerup", ganttDragPointerEnd);
 document.addEventListener("pointercancel", ganttDragPointerEnd);
 
 /* ---------- 計画タブの縦スクロール(フェイクスクロール) ---------- */
-/* タイムライン見出しのちらつき調査で判明した通り、iOSはネイティブの慣性
-   スクロール中にJSの実行(rAFや読み取り)自体を遅延させることがあり、
-   scrollイベント頼みでは見出し行の追随が一瞬遅れて見える。そこで計画タブの
-   縦スクロールも、今日タブのタイムラインと同じ考え方で完全にJS管理にする:
-   ドラッグ中は.wrapをtransformで見た目だけ動かし(実スクロールに触れない)、
-   指を離したら速度に応じてJSで慣性させ、最後に一度だけ実スクロール位置を
-   確定する。この間ネイティブの慣性スクロールは一度も発生しないため、
-   ブラウザ側のJS実行遅延の影響を受けない。
-   ガントの見出し行はタイムラインと違いネイティブのposition:stickyを使わず
-   常にJS計算のtransformで描画しているため、確定後の「ネイティブへの引き渡し
-   待ち」は不要(updateGanttStickyHeader()を1回呼び直すだけで一致する)。
-   一方、範囲選択ボタン等(.cal-sticky)はネイティブのposition:stickyなので、
-   .wrapのtransformの影響を打ち消す必要があり(タイムライン見出しと同じ理由)、
-   確定時の引き渡しもタイムラインと同じposition:fixed一時切替えで行う */
+/* 【アーキテクチャ】ガント表(#gantt)は画面の残り高さぶんに固定された表示領域
+   (overflow:hidden、高さはapplyGanttViewportHeight()がJSで算出)を持ち、
+   その中でタスク行の一覧だけが縦にJS管理のフェイクスクロールで動く。見出し行
+   (.g-track-head/.g-side .g-scell.g-sh/.g-ss)や範囲選択ナビ(.cal-sticky)は
+   一切動かない、単純な静的要素になる(position:stickyもJSのtransformも
+   使わない)。
+   以前は.wrap(計画タブの中身全体を包む祖先要素、ページ全体スクロールの
+   一部)を透明祖先としてtransformで動かし、その中にあるsticky要素
+   (ガント見出し行3つ・.cal-sticky)をそれぞれ逆transformで打ち消して見た目
+   だけ静止させる設計だった。しかしDevToolsでの実機調査で、スクロール確定の
+   瞬間(祖先のtransform解除・window.scrollTo()・sticky要素の逆transform解除
+   が同じタイミングで起きる)に、ちょうど1フレームだけガント見出し行が完全に
+   欠けて描画される不具合が繰り返し発生することが分かった。
+   measureGanttSticky()の誤測定・topEdgeの丸め誤差・will-change・祖先自体の
+   transformトグル・position:fixed一時退避の有無・確定処理のフレーム分割など、
+   考えられる原因を数多く検証・除外した結果、「sticky要素がtransformされた
+   祖先の中で動かされ、逆transformで戻される」という設計自体がこの不具合の
+   温床になっていると判断し、根本的に作り直した。
+   新しい設計では、ガント表専用の固定表示領域を作ることで、そもそもページ
+   全体をスクロールする必要がなくなった(#gantt自身が画面の残り高さに収まる
+   ため)。したがって.cal-sticky・ガント見出し行のどちらも、もう一切動かす
+   必要がない(position:sticky/JSのtransform、どちらも不要)。実際にJSで
+   動かす対象は、ガント表の「本体」側の要素(.g-side-body: タスク行の一覧、
+   .g-track-body: 日付マスが並ぶ本体)だけになった。ドラッグ中は見た目だけ
+   動かし、指を離したら速度に応じてJSで慣性させる。ページ全体のscrollには
+   一切触れないため、window.scrollTo()も.cal-stickyのposition:fixed一時退避も
+   不要になった */
 let gScrollPending = null; // 判定待ち { x, y }
 let gScrollFallback = false;
-let gScrollStartY = 0;
-let gScrollStartScrollY = 0;
-let gScrollMaxY = 0;
-let gScrollPendingY = null;
+let gScrollStartY = 0; // ジェスチャー開始時の指のY座標(ホイールは基準として0)
+let gScrollTop = 0; // ガント表内の仮想スクロール位置(0=一番上)。実ブラウザのscrollとは無関係
+let gScrollStartTop = 0; // ジェスチャー開始時点のgScrollTop
+let gScrollMaxTop = 0; // 最大スクロール量(本体の全高 - 表示領域の高さ)
+let gScrollPendingTop = null; // ドラッグ中の暫定スクロール位置
 let gScrollRAF = null;
 let gScrollVelSamples = [];
 let gMomentumRAF = null;
-let gCalStickyTop = 0; // .cal-stickyのsticky吸着位置(--fixed-hを解決した実際のpx値)
-let gCalNaturalK = 0; // .cal-stickyの本来の(吸着していない)位置 - フォールバック開始時のスクロール位置
-let gCalBaseRendered = 0; // フォールバック開始時点(offset=0)での実際の描画位置
-let gCalSettleGen = 0; // .cal-stickyのposition:fixed引き渡し待ちの世代カウンタ(timelineと同じ理由)
 let gWheelEndTimer = null; // マウスホイールでの疑似スクロール確定待ちタイマー
 
-function gClampScrollOffset(offset) {
-  const minOffset = gScrollStartScrollY - gScrollMaxY;
-  const maxOffset = gScrollStartScrollY;
-  return Math.max(minOffset, Math.min(maxOffset, offset));
+/* #gantt自体の高さを「画面の残り高さ」に合わせる。.cal-stickyのすぐ下から
+   画面下端までを表示領域とする */
+function applyGanttViewportHeight() {
+  const box = document.getElementById("gantt");
+  if (!box) return;
+  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge())}px`;
+}
+
+/* 現在表示中の本体の全高・表示領域の高さから、最大スクロール量を測り直す。
+   タスクの折りたたみ・フィルタ変更・再描画・リサイズなど、内容の高さが
+   変わりうるタイミングで呼ぶ。現在位置が新しい最大値を超えていれば
+   その場でクランプし直す(内容が短くなったのに空白のまま、を防ぐ) */
+function gRecalcScrollMax() {
+  const trackBody = document.querySelector("#gantt .g-track-body");
+  const viewport = document.querySelector("#gantt .g-scroll");
+  const contentHeight = trackBody ? trackBody.offsetHeight : 0;
+  const viewportHeight = viewport ? viewport.clientHeight : 0;
+  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight);
+  if (gScrollTop > gScrollMaxTop) {
+    gScrollTop = gScrollMaxTop;
+    gApplyScrollPosition(gScrollTop);
+  }
+}
+
+function gClampScrollTop(top) {
+  return Math.max(0, Math.min(gScrollMaxTop, top));
+}
+
+function gApplyScrollPosition(top) {
+  /* 空文字には戻さず常にtranslateYを明示するのは、CSS側の
+     transform: translateY(0px)ベースライン宣言と対になっている
+     (noneへの切り替えを避けるため、他のtransform常時化と同じ理由) */
+  const sideBody = document.querySelector("#gantt .g-side-body");
+  if (sideBody) sideBody.style.transform = `translateY(${-top}px)`;
+  const trackBody = document.querySelector("#gantt .g-track-body");
+  if (trackBody) trackBody.style.transform = `translateY(${-top}px)`;
 }
 
 function gApplyScrollFallback() {
   gScrollRAF = null;
-  if (!gScrollFallback || gScrollPendingY === null || view !== "gantt") return;
-  const wrap = document.querySelector(".wrap");
-  if (!wrap) return;
-  const offset = gClampScrollOffset(gScrollPendingY - gScrollStartY);
-  wrap.style.transform = `translateY(${offset}px)`;
-  /* 実際にスクロールしたのと同じ実効scrollYを渡し、見出し行の位置計算を
-     updateGanttStickyHeader()と完全に共通化する */
-  updateGanttStickyHeader(gScrollStartScrollY - offset);
-  /* .cal-sticky(ネイティブsticky)は.wrapのtransformの影響をそのまま受けて
-     一緒に動いてしまうため、タイムライン見出しと同じ式で打ち消す */
-  const cal = document.querySelector(".cal-sticky");
-  if (cal) {
-    const desired = Math.max(gCalStickyTop, gCalNaturalK + offset);
-    const counter = desired - gCalBaseRendered - offset;
-    cal.style.transform = `translateY(${counter}px)`;
-  }
+  if (!gScrollFallback || gScrollPendingTop === null || view !== "gantt") return;
+  gScrollTop = gClampScrollTop(gScrollPendingTop);
+  gApplyScrollPosition(gScrollTop);
 }
 
 /* ポインタでのドラッグ開始・マウスホイールでの疑似スクロール開始の
@@ -2265,31 +2134,9 @@ function gApplyScrollFallback() {
 function gBeginScrollFallback(startY) {
   gScrollFallback = true;
   gScrollStartY = startY;
-  gScrollStartScrollY = window.scrollY;
-  gScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  gRecalcScrollMax();
+  gScrollStartTop = gScrollTop;
   gScrollVelSamples = [];
-  /* .cal-stickyの「本来の(吸着していない)位置」を測る。#timeline-headと同じ
-     手法(一時的にposition:staticに戻して実測)。前のジェスチャーの引き渡し
-     待ち(position:fixed)がまだ残っていれば、まずsticky管理下に戻す */
-  const cal = document.querySelector(".cal-sticky");
-  if (cal) {
-    gCalSettleGen++;
-    if (cal.style.position === "fixed") {
-      cal.style.position = "";
-      cal.style.left = "";
-      cal.style.width = "";
-      cal.style.top = "";
-      const spacer = document.getElementById("cal-sticky-spacer");
-      if (spacer) spacer.style.height = "0px";
-    }
-    gCalStickyTop = parseFloat(getComputedStyle(cal).top) || 0;
-    const prevPosition = cal.style.position;
-    cal.style.position = "static";
-    const naturalTop = gScrollStartScrollY + cal.getBoundingClientRect().top;
-    cal.style.position = prevPosition;
-    gCalNaturalK = naturalTop - gScrollStartScrollY;
-    gCalBaseRendered = Math.max(gCalStickyTop, gCalNaturalK);
-  }
 }
 
 function gEngageScrollFallback(e) {
@@ -2329,7 +2176,8 @@ document.addEventListener("pointerdown", (e) => {
 document.addEventListener("pointermove", (e) => {
   if (gScrollFallback) {
     e.preventDefault();
-    gScrollPendingY = e.clientY;
+    /* 指が上に動く(clientYが減る)ほど下方向へスクロール(gScrollTopが増える) */
+    gScrollPendingTop = gScrollStartTop + (gScrollStartY - e.clientY);
     if (!gScrollRAF) gScrollRAF = requestAnimationFrame(gApplyScrollFallback);
     const now = performance.now();
     gScrollVelSamples.push({ t: now, y: e.clientY });
@@ -2381,7 +2229,7 @@ document.addEventListener("wheel", (e) => {
   e.preventDefault();
   if (!gScrollFallback) gBeginScrollFallback(0);
   clearTimeout(gWheelEndTimer);
-  gScrollPendingY = (gScrollPendingY ?? 0) - e.deltaY;
+  gScrollPendingTop = (gScrollPendingTop ?? gScrollTop) + e.deltaY;
   if (!gScrollRAF) gScrollRAF = requestAnimationFrame(gApplyScrollFallback);
   gWheelEndTimer = setTimeout(() => {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
@@ -2403,10 +2251,10 @@ function gStartMomentum(v0) {
     if (sign < 0 && nextVelocity > 0) nextVelocity = 0;
     const avgVelocity = (velocity + nextVelocity) / 2;
     velocity = nextVelocity;
-    gScrollPendingY += avgVelocity * dt;
-    gApplyScrollFallback();
-    const rawOffset = gScrollPendingY - gScrollStartY;
-    const hitBoundary = gClampScrollOffset(rawOffset) !== rawOffset;
+    gScrollPendingTop += avgVelocity * dt;
+    gScrollTop = gClampScrollTop(gScrollPendingTop);
+    gApplyScrollPosition(gScrollTop);
+    const hitBoundary = gClampScrollTop(gScrollPendingTop) !== gScrollPendingTop;
     if (velocity !== 0 && !hitBoundary) {
       gMomentumRAF = requestAnimationFrame(step);
     } else {
@@ -2420,88 +2268,11 @@ function gStartMomentum(v0) {
 function gFinalizeScrollFallback() {
   gScrollFallback = false;
   clearTimeout(gWheelEndTimer);
-  const wrap = document.querySelector(".wrap");
-  let finalOffset = null;
-  if (wrap) {
-    if (gScrollPendingY !== null) {
-      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-      const minOffset = gScrollStartScrollY - freshMaxY;
-      const maxOffset = gScrollStartScrollY;
-      const rawOffset = gScrollPendingY - gScrollStartY;
-      finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
-      window.scrollTo(0, gScrollStartScrollY - finalOffset);
-    }
-    wrap.style.transform = "";
+  if (gScrollPendingTop !== null) {
+    gScrollTop = gClampScrollTop(gScrollPendingTop);
+    gApplyScrollPosition(gScrollTop);
   }
-  gScrollPendingY = null;
-  updateGanttStickyHeader(); // 実スクロール位置(window.scrollTo直後)で再計算し直す
-  /* ↑ここまでは全てtransformの書き換えのみでレイアウトに影響しないため、
-     window.scrollTo()/.wrapのtransform解除と同じ同期処理のままにしておく */
-  const cal = document.querySelector(".cal-sticky");
-  if (cal) cal.style.transform = "";
-
-  /* .cal-stickyのposition:fixedへの切り替え(position/spacerの高さ変更を
-     伴う、レイアウトに影響する重い変更)だけは、次の描画フレームまで1コマ
-     遅らせる。Performanceパネルでの実機調査で、window.scrollTo()直後の
-     同じ同期処理の中でこの切り替えまで行っていると、ちょうど1フレームだけ
-     ガント見出し行が欠けて描画される(Paint flashingで他のコンテンツより
-     見出し行の再描画が遅れて別に光る現象と一致)ことが分かったため、
-     スクロール位置の変更をブラウザが先に合成し終える猶予を与える狙い。
-     transformだけの軽い変更(上のupdateGanttStickyHeader()やcalのtransform
-     クリア)は据え置き、レイアウトに影響する重い変更だけを遅らせることで、
-     ヘッダー自身が1フレームだけ古いtransformのまま取り残されて位置がずれる、
-     という新たな不具合を生まないようにしている。
-     requestAnimationFrameを1回だけ呼んでも「次の再描画の直前」に実行される
-     だけで、window.scrollTo()直後の最初の描画にまだ間に合ってしまい実質
-     遅延にならない(v113で効果がなかった原因はこれだったと考えられる)。
-     確実に1フレーム分の描画を挟んでから実行するため、rAFを2重に呼ぶ
-     (1回目のコールバックの中でさらにrAFを呼ぶ)定番の手法を使う */
-  if (finalOffset !== null) {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => gFinalizeCalSettle(finalOffset));
-    });
-  }
-}
-
-function gFinalizeCalSettle(finalOffset) {
-  /* .cal-stickyはネイティブsticky。#timeline-headと同じ理由(ネイティブの
-     sticky計算がスクロール位置反映の途中で一時的に不安定になりうる)で、
-     確定直後の短い間だけJS管理のposition:fixedに切り替えてネイティブの
-     計算結果に依存しない絶対位置で描画し、scrollend/タイムアウトを待って
-     から一括でsticky管理に戻す。
-     (実験メモ: この処理を一時的に無効化して検証したところ、ガント見出し行の
-     点滅が「ヘッダーが固定表示中のみ」から「固定表示でなくても常に」発生する
-     ように悪化したため元に戻した。この処理は点滅の原因ではなく、むしろ
-     発生範囲を限定する側に働いていたと考えられる) */
-  const cal = document.querySelector(".cal-sticky");
-  if (!cal) return;
-  const rect = cal.getBoundingClientRect();
-  const desired = Math.max(gCalStickyTop, gCalNaturalK + finalOffset);
-  cal.style.transform = "";
-  cal.style.position = "fixed";
-  cal.style.left = `${rect.left}px`;
-  cal.style.width = `${rect.width}px`;
-  cal.style.top = `${desired}px`;
-  /* position:fixedにすると通常のドキュメントフローから外れ、それまで.cal-sticky
-     が占めていた分の高さが消えて後続要素(#gantt)が詰まって見える(#timeline-head
-     のときと同じ問題)。spacerでその高さぶんを確保しておく */
-  const spacer = document.getElementById("cal-sticky-spacer");
-  if (spacer) spacer.style.height = `${rect.height}px`;
-  const gen = ++gCalSettleGen;
-  const release = () => {
-    if (gScrollFallback || gen !== gCalSettleGen) return;
-    cal.style.position = "";
-    cal.style.left = "";
-    cal.style.width = "";
-    cal.style.top = "";
-    if (spacer) spacer.style.height = "0px";
-  };
-  if ("onscrollend" in window) {
-    window.addEventListener("scrollend", release, { once: true });
-    setTimeout(release, 500);
-  } else {
-    setTimeout(release, 300);
-  }
+  gScrollPendingTop = null;
 }
 
 function gPointerEnd() {
@@ -2517,7 +2288,10 @@ function gPointerEnd() {
   }
   gScrollVelSamples = [];
   if (Math.abs(fingerVel) >= TL_MOMENTUM_MIN_VELOCITY) {
-    gStartMomentum(fingerVel);
+    /* fingerVelは指のclientYの変化率(下向きが正)。gScrollTopは上向きの
+       ドラッグで増える向きなので符号を反転させる(pointermoveの計算式と
+       同じ対応関係) */
+    gStartMomentum(-fingerVel);
   } else {
     gFinalizeScrollFallback();
   }
