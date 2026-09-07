@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v113"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v114"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2450,9 +2450,16 @@ function gFinalizeScrollFallback() {
      transformだけの軽い変更(上のupdateGanttStickyHeader()やcalのtransform
      クリア)は据え置き、レイアウトに影響する重い変更だけを遅らせることで、
      ヘッダー自身が1フレームだけ古いtransformのまま取り残されて位置がずれる、
-     という新たな不具合を生まないようにしている */
+     という新たな不具合を生まないようにしている。
+     requestAnimationFrameを1回だけ呼んでも「次の再描画の直前」に実行される
+     だけで、window.scrollTo()直後の最初の描画にまだ間に合ってしまい実質
+     遅延にならない(v113で効果がなかった原因はこれだったと考えられる)。
+     確実に1フレーム分の描画を挟んでから実行するため、rAFを2重に呼ぶ
+     (1回目のコールバックの中でさらにrAFを呼ぶ)定番の手法を使う */
   if (finalOffset !== null) {
-    requestAnimationFrame(() => gFinalizeCalSettle(finalOffset));
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => gFinalizeCalSettle(finalOffset));
+    });
   }
 }
 
