@@ -446,14 +446,12 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 6;
   background: var(--bg);
   display: flow-root;
-  /* .cal-sticky配下は横(タブ切り替え)も縦(縦フェイクスクロール)もJSが
-     全面的に処理し、ネイティブの横スクロールが必要な要素は無い。
-     pan-x/pan-yのような部分許可だとiOSでネイティブのジェスチャー認識と
-     競合し、preventDefault()が効かずネイティブスクロールが発生する
-     ことがあった(ヘッダーがスワイプ中ずっと消え、指を離した後も慣性が
-     続く間ちらつく不具合の原因)。noneで完全にネイティブへ渡さないように
-     する(.g-cell.has-markと同じ、実績のある方式) */
-  touch-action: none;
+  /* 【v117で変更】以前は縦方向もJS管理のフェイクスクロールに含めていたため
+     touch-action: noneにしていたが、#gantt自体が専用のスクロール領域に
+     なったことで.cal-stickyはページの通常のネイティブスクロールに委ねる
+     単純なsticky要素に戻ったため、ネイティブの縦scrollを妨げないよう
+     pan-yに戻した(.cal-nav等、他の.cal-sticky配下要素と同じ値) */
+  touch-action: pan-y;
 }
 #cal-gap-cover {
   display: none;
@@ -466,15 +464,6 @@ body[data-view="cal"] #fab { display: none; }
   z-index: 5;
 }
 body[data-view="gantt"] #cal-gap-cover { display: block; }
-/* .topbar/.tabsは他タブでは横スワイプ用にtouch-action:pan-y(縦はネイティブ
-   に許可)だが、計画タブ表示中は横(タブ切り替え)・縦(縦フェイクスクロール)
-   ともJSが全面的に処理するため、pan-x/pan-yのような部分許可ではなくnoneに
-   する(.cal-stickyと同じ理由。body[data-view]で計画タブ表示中だけ上書き) */
-body[data-view="gantt"] .topbar,
-body[data-view="gantt"] .tabs,
-body[data-view="gantt"] #fixedbars {
-  touch-action: none;
-}
 .cal-nav {
   display: flex;
   justify-content: space-between;

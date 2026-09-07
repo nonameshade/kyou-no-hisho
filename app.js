@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v117"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v118"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2151,13 +2151,13 @@ document.addEventListener("pointerdown", (e) => {
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
   if (e.target.closest(".overlay")) return; // 操作方法モーダル等の表示中
   if (e.target.closest("input, textarea, select")) return;
-  /* #view-gantt(表本体+.cal-sticky)だけでなく、.topbar/.tabs(画面最上部の
-     日付表示・タブ切り替え。他タブと共有のためDOM上は#view-ganttの外にある)
-     から始まる縦スワイプもここで受け止める。対象外の領域から始まる縦
-     スクロールはネイティブスクロールに委ねることになり、その間ネイティブの
-     慣性スクロール中はJSの実行が遅延して見出し行が消える/追随しない
-     不具合があった。計画タブ表示中(view==="gantt")に限定されるため、
-     他タブのスクロールには影響しない */
+  /* 【v117で変更】#gantt自体が専用のスクロール領域になったため、この
+     フェイクスクロールの対象は#gantt内から始まるジェスチャーだけに限定する。
+     .topbar/.tabs/.cal-sticky(#ganttの外)から始まる縦スワイプは、ページの
+     通常のネイティブスクロールに委ねる(これらの上にあるタブバーを隠す
+     ためのスクロールで、.cal-stickyはネイティブのposition:stickyだけで
+     追随するため、以前のようにJSで横取りする必要がない) */
+  if (!e.target.closest("#gantt")) return;
   if (gScrollFallback) {
     if (gScrollRAF) { cancelAnimationFrame(gScrollRAF); gScrollRAF = null; }
     if (gMomentumRAF) { cancelAnimationFrame(gMomentumRAF); gMomentumRAF = null; }
@@ -2208,13 +2208,10 @@ document.addEventListener("touchmove", (e) => {
   }
 }, { passive: false });
 
-/* マウスホイール(Windows等)によるネイティブスクロールも、指でのスワイプと
-   同じJS管理の縦フェイクスクロールに乗せる。タッチではネイティブの慣性
-   スクロールを一度も発生させない設計にしてこの一連の不具合(見出し行の
-   ちらつき・追随遅れ)を回避しているが、マウスホイールはこれまでこの
-   仕組みを経由せず素通りしており(常にscrollYOverride無しでネイティブ
-   stickyに委ねる経路のみを通っていた)、Windowsでスクロール中にタスク行が
-   見出し行の上にはみ出して見える不具合の原因になっていたと考えられる。
+/* マウスホイール(Windows等)によるスクロールも、指でのスワイプと同じJS管理の
+   縦フェイクスクロールに乗せる。#gantt自体が専用のスクロール領域になった
+   ため、#gantt内から始まるホイール操作だけを対象にする(ページ側の通常の
+   スクロールは.topbar/.tabs/.cal-stickyの表示/非表示にネイティブで任せる)。
    ホイールには指のような明確な「開始/終了」がないため、イベントが一定時間
    (150ms)途切れた時点でスクロールが止まったとみなして確定させる */
 document.addEventListener("wheel", (e) => {
@@ -2222,6 +2219,7 @@ document.addEventListener("wheel", (e) => {
   if (document.body.style.position === "fixed") return; // 全画面フォーム表示中
   if (e.target.closest(".overlay")) return;
   if (e.target.closest("input, textarea, select")) return;
+  if (!e.target.closest("#gantt")) return;
   if (e.target.closest(".g-scroll, .g-side")) {
     // 表本体上でのShift+ホイール/横方向ホイールは横スクロールに譲る
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
