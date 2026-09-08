@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v123"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v124"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2137,14 +2137,39 @@ let gScrollVelSamples = [];
 let gMomentumRAF = null;
 let gWheelEndTimer = null; // マウスホイールでの疑似スクロール確定待ちタイマー
 
+/* FAB(タスクを追加ボタン)の実際の画面上の位置から、最後の行がその裏に
+   隠れないために必要なクリアランス量を算出する。#fabはposition:fixedなので
+   getBoundingClientRect().topがそのままenv(safe-area-inset-bottom)込みの
+   実際の表示位置になる */
+function gFabClearance() {
+  const fab = document.getElementById("fab");
+  if (!fab) return 0;
+  return Math.max(0, window.innerHeight - fab.getBoundingClientRect().top + 12);
+}
+
 /* #gantt自体の高さを「画面の残り高さ」に合わせる。.cal-stickyのすぐ下から
-   画面下端までを表示領域とする(FAB用の余白はここでは確保しない。常に
-   表示され続ける固定の空白になってしまうため。スクロールし切ったときだけ
-   最後の行がFABの裏に隠れないようにする処理はgRecalcScrollMax()側で行う) */
+   画面下端までを表示領域とするのが基本だが、それだと全部の行が収まらず
+   スクロールが必要になる場合、最後の行がFABの裏に隠れてしまう。かといって
+   常にFABの分だけ高さを削ると、行数が少なくスクロール不要なときにも
+   表の下に無意味な空白が常時残ってしまう。そこで、まずフルの高さで一旦
+   計測し(内容がそのフルの高さに収まるかどうかを見るため)、実際に収まり
+   切らない場合だけ、その分だけ高さを削って外側(#gantt自身の外)に余白を
+   作る。この削り方は再描画・リサイズなど内容や画面サイズが変わるたびに
+   毎回このタイミングでのみ再計算し、スクロール操作それ自体の最中に
+   #ganttの高さを動かすことはしない(スクロール中に表示領域そのものが
+   動くと不安定になるため) */
 function applyGanttViewportHeight() {
   const box = document.getElementById("gantt");
   if (!box) return;
-  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge())}px`;
+  const fullHeight = Math.max(120, window.innerHeight - ganttTopEdge());
+  box.style.height = `${fullHeight}px`;
+  const trackBody = document.querySelector("#gantt .g-track-body");
+  const viewport = document.querySelector("#gantt .g-scroll");
+  const contentHeight = trackBody ? trackBody.offsetHeight : 0;
+  const viewportHeight = viewport ? viewport.clientHeight : 0;
+  if (contentHeight > viewportHeight) {
+    box.style.height = `${Math.max(120, fullHeight - gFabClearance())}px`;
+  }
 }
 
 /* #tab-headerの自然な高さ(畳める最大量)を測り直す。style.heightで縮めて
@@ -2157,28 +2182,18 @@ function gMeasureHeaderMax() {
 
 /* 現在表示中の本体の全高・表示領域の高さ・#tab-headerの高さから、
    スクロール範囲を測り直す。タスクの折りたたみ・フィルタ変更・再描画・
-   リサイズなど、内容の高さが変わりうるタイミングで呼ぶ。現在位置が新しい
+   リサイズなど内容の高さが変わりうるタイミングで呼ぶ。現在位置が新しい
    範囲からはみ出していればその場でクランプし直す(内容が短くなったのに
-   空白のまま、を防ぐ)。
-   最後まで(gScrollMaxTopまで)スクロールしたときだけ、最後の行がFAB
-   (タスクを追加ボタン)の裏に隠れないよう、実際のFABの表示位置から必要な
-   分だけ余分にスクロールできるようにする(gFabScrollClearance)。この分は
-   .g-track-body/.g-side-body自体には一切余白を持たせず、スクロール範囲
-   (gScrollMaxTop)を広げるだけなので、最後までスクロールしない限り画面上
-   には一切現れない(常時確保される固定の空白にはならない) */
-function gFabScrollClearance() {
-  const fab = document.getElementById("fab");
-  if (!fab) return 0;
-  return Math.max(0, window.innerHeight - fab.getBoundingClientRect().top + 12);
-}
-
+   空白のまま、を防ぐ)。FABのクリアランスはapplyGanttViewportHeight()側で
+   #gantt自体の高さに織り込み済みのため、ここでは通常通り実高さと表示
+   領域の高さの差だけで最大スクロール量を求めればよい */
 function gRecalcScrollMax() {
   gMeasureHeaderMax();
   const trackBody = document.querySelector("#gantt .g-track-body");
   const viewport = document.querySelector("#gantt .g-scroll");
   const contentHeight = trackBody ? trackBody.offsetHeight : 0;
   const viewportHeight = viewport ? viewport.clientHeight : 0;
-  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight) + gFabScrollClearance();
+  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight);
   gScrollTop = gClampScrollTop(gScrollTop);
   gApplyScrollPosition(gScrollTop);
 }
