@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v126"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v127"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1362,8 +1362,11 @@ function tlPointerEnd() {
   const below = d.others[d.gapIndex] || null;
   const startMin = tlComputeStart(above, below, d.estimateMin);
   const a = d.id ? state.assignments.find((x) => x.id === d.id) : null;
+  /* 元の位置(掴んだ時点のgapIndex)のまま、または動かして元の位置に戻して
+     ドロップした場合は、並び順が変わっていないので開始時刻は変更しない */
+  const moved = d.gapIndex !== d.originalIndex;
   if (a) {
-    if (startMin !== null) a.start = minToHm(startMin);
+    if (moved && startMin !== null) a.start = minToHm(startMin);
     /* 配列内の並び順もドロップ位置に合わせる。開始時刻が同じ(同着)場合はこの並び順で
        表示順が決まるため、時刻のルールだけでは並び替えできない場面(同時刻同士の間へ
        ドロップした結果、時刻が変わらない/同じになる場合)でも位置が反映されるようにする */
