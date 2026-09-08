@@ -557,12 +557,13 @@ body[data-view="gantt"] #fixedbars {
 /* ---------- ガント(フェーズ3c) ---------- */
 /* FAB(タスクを追加ボタン)のクリアランスは.g-side-body/.g-track-bodyの
    padding-bottomには持たせない(表の内部にスクロールで通過できる空白が
-   でき見た目が悪いため)。#gantt自体の高さ(applyGanttViewportHeight()、
-   app.js)を、実際に全行が収まらずスクロールが必要になる場合だけFABの分
-   短く算出することで、余白を表の外側に作る。行数が少なくスクロール不要な
-   場合は#gantt自体を画面の残り高さぴったりまで使い、余白は一切作らない。
-   計画タブでは#gantt自身がこの高さ調整を担うため、.wrap自体の下端
-   パディングは不要(0にする) */
+   でき見た目が悪いため)。代わりに#gantt自体の高さ(app.jsのgApplyScroll
+   Position())を、実際に最後まで(自然な終端=gNaturalMaxTopを超えて)
+   スクロールしたぶんだけその場で縮め、縮んだ分がそのまま表の外側の余白に
+   なるようにしている。全行が収まる間・自然な終端までは#gantt自体は
+   画面の残り高さぴったりのままで、余白は一切作られない。計画タブでは
+   #gantt自身がこの高さ調整を担うため、.wrap自体の下端パディングは不要
+   (0にする) */
 body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 
 /* #gantt自体を画面の残り高さに固定された表示領域にする(高さはJSの
@@ -824,8 +825,9 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
    見出し行(.g-track-head、上記)はこれとは別に固定されたまま動かない。
    FAB(タスクを追加ボタン)のクリアランスはここにはpadding-bottomとして
    持たせない(表の内部にスクロールで通過できる空白ができてしまうため)。
-   代わりに#gantt自体の高さ(applyGanttViewportHeight()、app.js)側で
-   必要な場合だけ表の外側に余白を作る */
+   代わりに#gantt自体の高さ(gApplyScrollPosition()、app.js)が、実際に
+   最後まで引っ張ってスクロールしたときだけその場で縮み、表の外側に
+   余白を作る */
 .g-track-body {
   will-change: transform;
   transform: translateY(0px); /* noneへの切り替えを避けるため常時transformを持たせる(他要素と同じ理由) */

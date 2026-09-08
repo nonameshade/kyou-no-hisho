@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v124"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v125"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2130,7 +2130,10 @@ let gScrollStartY = 0; // ジェスチャー開始時の指のY座標(ホイー�
 let gScrollTop = 0; // ガント表内の仮想スクロール位置。0=#tab-header畳み終わり/本体一番上。負の値=#tab-header畳み途中
 let gScrollStartTop = 0; // ジェスチャー開始時点のgScrollTop
 let gHeaderMax = 0; // #tab-headerの自然な高さ(=畳める最大量)
-let gScrollMaxTop = 0; // 最大スクロール量(本体の全高 - 表示領域の高さ)
+let gScrollMaxTop = 0; // 最大スクロール量(自然な最大=gNaturalMaxTop + FABクリアランス猶予=gFabGap)
+let gNaturalMaxTop = 0; // 全行が実際に収まりきらない量(本体の全高 - フル表示領域の高さ)。FABクリアランスは含まない
+let gFabGap = 0; // gNaturalMaxTopを超えて引っ張れる猶予量(=gFabClearance())。この分だけ#gantt自体が縮んで外側に余白が現れる
+let gGanttFullHeight = 0; // #gantt本来の(FABクリアランスで縮める前の)高さ
 let gScrollPendingTop = null; // ドラッグ中の暫定スクロール位置
 let gScrollRAF = null;
 let gScrollVelSamples = [];
@@ -2147,29 +2150,16 @@ function gFabClearance() {
   return Math.max(0, window.innerHeight - fab.getBoundingClientRect().top + 12);
 }
 
-/* #gantt自体の高さを「画面の残り高さ」に合わせる。.cal-stickyのすぐ下から
-   画面下端までを表示領域とするのが基本だが、それだと全部の行が収まらず
-   スクロールが必要になる場合、最後の行がFABの裏に隠れてしまう。かといって
-   常にFABの分だけ高さを削ると、行数が少なくスクロール不要なときにも
-   表の下に無意味な空白が常時残ってしまう。そこで、まずフルの高さで一旦
-   計測し(内容がそのフルの高さに収まるかどうかを見るため)、実際に収まり
-   切らない場合だけ、その分だけ高さを削って外側(#gantt自身の外)に余白を
-   作る。この削り方は再描画・リサイズなど内容や画面サイズが変わるたびに
-   毎回このタイミングでのみ再計算し、スクロール操作それ自体の最中に
-   #ganttの高さを動かすことはしない(スクロール中に表示領域そのものが
-   動くと不安定になるため) */
+/* #gantt自体の高さを「画面の残り高さ」(=フルの高さ、gGanttFullHeight)に
+   リセットする。.cal-stickyのすぐ下から画面下端までを表示領域とする。
+   FABクリアランスはここでは一切考慮しない(常にフルの高さに戻すだけ)。
+   実際に高さを縮めて外側に余白を作るかどうかはgApplyScrollPosition()が
+   現在のスクロール位置(gScrollTop)に応じて毎回判定する(下記参照) */
 function applyGanttViewportHeight() {
   const box = document.getElementById("gantt");
   if (!box) return;
-  const fullHeight = Math.max(120, window.innerHeight - ganttTopEdge());
-  box.style.height = `${fullHeight}px`;
-  const trackBody = document.querySelector("#gantt .g-track-body");
-  const viewport = document.querySelector("#gantt .g-scroll");
-  const contentHeight = trackBody ? trackBody.offsetHeight : 0;
-  const viewportHeight = viewport ? viewport.clientHeight : 0;
-  if (contentHeight > viewportHeight) {
-    box.style.height = `${Math.max(120, fullHeight - gFabClearance())}px`;
-  }
+  gGanttFullHeight = Math.max(120, window.innerHeight - ganttTopEdge());
+  box.style.height = `${gGanttFullHeight}px`;
 }
 
 /* #tab-headerの自然な高さ(畳める最大量)を測り直す。style.heightで縮めて
@@ -2184,16 +2174,29 @@ function gMeasureHeaderMax() {
    スクロール範囲を測り直す。タスクの折りたたみ・フィルタ変更・再描画・
    リサイズなど内容の高さが変わりうるタイミングで呼ぶ。現在位置が新しい
    範囲からはみ出していればその場でクランプし直す(内容が短くなったのに
-   空白のまま、を防ぐ)。FABのクリアランスはapplyGanttViewportHeight()側で
-   #gantt自体の高さに織り込み済みのため、ここでは通常通り実高さと表示
-   領域の高さの差だけで最大スクロール量を求めればよい */
+   空白のまま、を防ぐ)。
+   表示領域の高さ(.g-scrollのclientHeight)は「自然な(FABクリアランスで
+   縮める前の)高さ」で測る必要があるため、#gantt自体を一旦gGanttFullHeight
+   に戻してから測る(gBeginScrollFallback()経由など、直前のスクロール位置に
+   よっては#ganttがすでに縮んだ状態で呼ばれることがあるため)。
+   最大スクロール量(gScrollMaxTop)は、全行が実際に収まりきらない量
+   (gNaturalMaxTop)に、FABクリアランスの猶予(gFabGap)を足したもの。
+   この猶予分を実際にスクロールした(引っ張った)ときだけ、
+   gApplyScrollPosition()が#gantt自体の高さを縮めて外側に余白を見せる */
 function gRecalcScrollMax() {
   gMeasureHeaderMax();
+  const box = document.getElementById("gantt");
+  if (box) {
+    gGanttFullHeight = Math.max(120, window.innerHeight - ganttTopEdge());
+    box.style.height = `${gGanttFullHeight}px`;
+  }
   const trackBody = document.querySelector("#gantt .g-track-body");
   const viewport = document.querySelector("#gantt .g-scroll");
   const contentHeight = trackBody ? trackBody.offsetHeight : 0;
   const viewportHeight = viewport ? viewport.clientHeight : 0;
-  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight);
+  gNaturalMaxTop = Math.max(0, contentHeight - viewportHeight);
+  gFabGap = gFabClearance();
+  gScrollMaxTop = gNaturalMaxTop + gFabGap;
   gScrollTop = gClampScrollTop(gScrollTop);
   gApplyScrollPosition(gScrollTop);
 }
@@ -2226,6 +2229,16 @@ function gApplyScrollPosition(top) {
   if (sideBody) sideBody.style.transform = `translateY(${-bodyOffset}px)`;
   const trackBody = document.querySelector("#gantt .g-track-body");
   if (trackBody) trackBody.style.transform = `translateY(${-bodyOffset}px)`;
+  /* 全行が自然に収まる範囲(bodyOffset <= gNaturalMaxTop)ではFAB用の余白は
+     一切作らず、#gantt自体はgGanttFullHeightのまま。gNaturalMaxTopを超えて
+     引っ張った分(最大gFabGapまで)だけ#gantt自体の高さをその場で縮め、
+     縮んだ分がそのまま画面下端との間に表の外側の余白として現れる
+     (最後の行はtranslateYで下端に張り付いたままなので、外側の余白が
+     増えた分だけ最後の行がFABの上に持ち上がって見える)。これにより余白は
+     実際に最後まで引っ張ったときだけ現れ、それ以外は一切作られない */
+  const reveal = Math.max(0, Math.min(gFabGap, bodyOffset - gNaturalMaxTop));
+  const box = document.getElementById("gantt");
+  if (box) box.style.height = `${Math.max(120, gGanttFullHeight - reveal)}px`;
 }
 
 function gApplyScrollFallback() {
