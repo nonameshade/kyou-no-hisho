@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v125"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v126"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1612,10 +1612,9 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
             !t.done &&
             !children.length &&
             !state.assignments.some((a) => a.taskId === t.id);
-          const tipText = (crumbOf(t.id) ? crumbOf(t.id) + " › " + t.title : t.title) + (t.notes ? `\n📝 ${t.notes}` : "");
           sideRows.push(`
             <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" style="padding-left:${4 + depth * 14}px"
-                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(tipText)}">
+                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">
               ${caretG}
               <span class="g-name">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
@@ -1765,6 +1764,14 @@ function toggleCell(taskId, dk) {
 }
 
 /* ---------- タスク名の全体表示チップ ---------- */
+function hideNameTip() {
+  const tip = document.getElementById("name-tip");
+  if (!tip) return;
+  tip.style.display = "none";
+  showNameTip._anchor = null;
+  clearTimeout(showNameTip._t);
+}
+
 function showNameTip(text, anchor) {
   let tip = document.getElementById("name-tip");
   if (!tip) {
@@ -1774,23 +1781,32 @@ function showNameTip(text, anchor) {
   }
   /* 同じタイトルをもう一度タップしたら閉じる */
   if (tip.style.display === "block" && showNameTip._anchor === anchor) {
-    tip.style.display = "none";
-    showNameTip._anchor = null;
-    clearTimeout(showNameTip._t);
+    hideNameTip();
     return;
   }
   showNameTip._anchor = anchor;
   tip.textContent = text;
   tip.style.display = "block";
-  /* タップした行の真下に、ページ座標で固定(スクロールに追随し、ずれが蓄積しない) */
+  /* タップした行の真上に、ページ座標で固定(スクロールに追随し、ずれが蓄積しない) */
   const r = anchor.getBoundingClientRect();
   const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
   const x = Math.max(8 + window.scrollX, Math.min(r.left + window.scrollX, window.scrollX + window.innerWidth - w - 8));
   tip.style.left = `${x}px`;
-  tip.style.top = `${r.bottom + window.scrollY + 6}px`;
+  tip.style.top = `${r.top + window.scrollY - h - 6}px`;
   clearTimeout(showNameTip._t);
-  showNameTip._t = setTimeout(() => { tip.style.display = "none"; showNameTip._anchor = null; }, 4000);
+  showNameTip._t = setTimeout(hideNameTip, 4000);
 }
+
+/* 時間経過だけでなく、ツールチップの外側での操作(タップ・ドラッグの開始など)
+   があった時点でも閉じる。アンカー自身への操作は上のトグル処理(同じ行を
+   もう一度タップしたら閉じる)に任せるため、ここでは触らない */
+document.addEventListener("pointerdown", (e) => {
+  const tip = document.getElementById("name-tip");
+  if (!tip || tip.style.display !== "block") return;
+  if (showNameTip._anchor && showNameTip._anchor.contains(e.target)) return;
+  hideNameTip();
+});
 
 /* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
 let sortDrag = null;
@@ -3571,6 +3587,9 @@ document.addEventListener("click", (e) => {
     openTaskForm(null, null, id);
   } else if (action === "g-showname") {
     if (suppressClick) return;
+    /* タスク名が省略されず全部表示されている場合はツールチップを出さない */
+    const nameEl = btn.querySelector(".g-name");
+    if (nameEl && nameEl.scrollWidth <= nameEl.clientWidth + 1) return;
     showNameTip(btn.dataset.name, btn);
   } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
