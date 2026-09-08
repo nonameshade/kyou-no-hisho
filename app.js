@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v127"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v128"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -924,10 +924,16 @@ function tlApplyGap(gapIndex) {
     o.el.style.transform = shift ? `translateY(${shift}px)` : "";
   });
   tlDrag.gapIndex = gapIndex;
+  const timeEl = tlDrag.el.querySelector(".t-time");
+  if (gapIndex === orig) {
+    /* 元の位置に戻っている間は、4ルールでの計算値ではなく元の開始時刻をそのまま表示する
+       (ドロップ時に開始時刻を変更しないのに合わせるため) */
+    if (timeEl) timeEl.textContent = tlDrag.originalStart;
+    return;
+  }
   const above = tlDrag.others[gapIndex - 1] || null;
   const below = tlDrag.others[gapIndex] || null;
   const startMin = tlComputeStart(above, below, tlDrag.estimateMin);
-  const timeEl = tlDrag.el.querySelector(".t-time");
   if (timeEl && startMin !== null) timeEl.textContent = minToHm(startMin);
 }
 
@@ -1005,6 +1011,7 @@ function tlStartDrag(item, clientY) {
     el: item,
     id: asgId,
     estimateMin: Number(item.dataset.est) || 0,
+    originalStart: item.dataset.start,
     height,
     originalIndex,
     py: clientY,
