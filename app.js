@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v122"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v123"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2138,15 +2138,13 @@ let gMomentumRAF = null;
 let gWheelEndTimer = null; // マウスホイールでの疑似スクロール確定待ちタイマー
 
 /* #gantt自体の高さを「画面の残り高さ」に合わせる。.cal-stickyのすぐ下から
-   画面下端までを表示領域とするが、FAB(タスクを追加ボタン)のクリアランス
-   分(.wrapの下端パディング)は表の外側の余白として残すため、その分だけ
-   高さを短くする(表の内部にスクロール末尾の空白を作らないため) */
+   画面下端までを表示領域とする(FAB用の余白はここでは確保しない。常に
+   表示され続ける固定の空白になってしまうため。スクロールし切ったときだけ
+   最後の行がFABの裏に隠れないようにする処理はgRecalcScrollMax()側で行う) */
 function applyGanttViewportHeight() {
   const box = document.getElementById("gantt");
   if (!box) return;
-  const wrap = document.querySelector(".wrap");
-  const wrapBottomGap = wrap ? parseFloat(getComputedStyle(wrap).paddingBottom) || 0 : 0;
-  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge() - wrapBottomGap)}px`;
+  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge())}px`;
 }
 
 /* #tab-headerの自然な高さ(畳める最大量)を測り直す。style.heightで縮めて
@@ -2161,14 +2159,26 @@ function gMeasureHeaderMax() {
    スクロール範囲を測り直す。タスクの折りたたみ・フィルタ変更・再描画・
    リサイズなど、内容の高さが変わりうるタイミングで呼ぶ。現在位置が新しい
    範囲からはみ出していればその場でクランプし直す(内容が短くなったのに
-   空白のまま、を防ぐ) */
+   空白のまま、を防ぐ)。
+   最後まで(gScrollMaxTopまで)スクロールしたときだけ、最後の行がFAB
+   (タスクを追加ボタン)の裏に隠れないよう、実際のFABの表示位置から必要な
+   分だけ余分にスクロールできるようにする(gFabScrollClearance)。この分は
+   .g-track-body/.g-side-body自体には一切余白を持たせず、スクロール範囲
+   (gScrollMaxTop)を広げるだけなので、最後までスクロールしない限り画面上
+   には一切現れない(常時確保される固定の空白にはならない) */
+function gFabScrollClearance() {
+  const fab = document.getElementById("fab");
+  if (!fab) return 0;
+  return Math.max(0, window.innerHeight - fab.getBoundingClientRect().top + 12);
+}
+
 function gRecalcScrollMax() {
   gMeasureHeaderMax();
   const trackBody = document.querySelector("#gantt .g-track-body");
   const viewport = document.querySelector("#gantt .g-scroll");
   const contentHeight = trackBody ? trackBody.offsetHeight : 0;
   const viewportHeight = viewport ? viewport.clientHeight : 0;
-  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight);
+  gScrollMaxTop = Math.max(0, contentHeight - viewportHeight) + gFabScrollClearance();
   gScrollTop = gClampScrollTop(gScrollTop);
   gApplyScrollPosition(gScrollTop);
 }
