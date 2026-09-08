@@ -555,11 +555,14 @@ body[data-view="gantt"] #fixedbars {
 }
 
 /* ---------- ガント(フェーズ3c) ---------- */
-/* FAB(タスクを追加ボタン)のクリアランスは.g-track-body/.g-side-body自身の
-   padding-bottomで確保している(内部スクロールの最後で必要になるため)ので、
-   計画タブでは.wrap自体の下端パディングは不要(#gantt自体が画面の残り高さ
-   ぴったりに収まるようにするため0にする) */
-body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
+/* FAB(タスクを追加ボタン)のクリアランスは.wrap本来の下端パディング
+   (calc(96px + env(safe-area-inset-bottom))、上部の.wrap定義を参照)を
+   そのまま使う(表の外側の余白にする)。以前は表内部のスクロール末尾に
+   同じ量のpadding-bottomを持たせていたが、「表の中に空白ができる」
+   見た目になるため、#gantt自体の高さをその分だけ短く算出する方式に
+   変更した(applyGanttViewportHeight()参照)。ここでは.wrapの
+   padding-bottomを0にせず、max-widthのみ計画タブ用に上書きする */
+body[data-view="gantt"] .wrap { max-width: 980px; }
 
 /* #gantt自体を画面の残り高さに固定された表示領域にする(高さはJSの
    applyGanttViewportHeight()が算出してstyle.heightに書き込む)。以前は
@@ -818,12 +821,12 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 }
 /* 指でのフェイクスクロール中、実際にtransformで動かす本体側の要素。
    見出し行(.g-track-head、上記)はこれとは別に固定されたまま動かない。
-   最後の行がFAB(タスクを追加ボタン)の裏に隠れたままにならないよう、
-   下端に余白を確保しておく(.wrapの下端パディングと同じ理由) */
+   FAB(タスクを追加ボタン)のクリアランスはここには持たせず、#gantt自体の
+   高さ(applyGanttViewportHeight())を.wrapの下端パディング分だけ短く
+   算出することで表の外側(.wrapのパディング領域)に確保している */
 .g-track-body {
   will-change: transform;
   transform: translateY(0px); /* noneへの切り替えを避けるため常時transformを持たせる(他要素と同じ理由) */
-  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 .g-scell {
   height: 34px;
@@ -1347,9 +1350,9 @@ input[type="date"], input[type="time"] {
   position: relative;
 }
 /* 指でのフェイクスクロール中、実際にtransformで動かす本体側の要素
-   (タスク行の一覧)。.g-track-bodyと同じ理由・同じ下端余白 */
+   (タスク行の一覧)。FABクリアランスの考え方は.g-track-bodyと同じ
+   (表の外側、#ganttの高さ算出側で確保する) */
 .g-side-body {
   will-change: transform;
   transform: translateY(0px);
-  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }

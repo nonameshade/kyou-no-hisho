@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v121"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v122"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2138,11 +2138,15 @@ let gMomentumRAF = null;
 let gWheelEndTimer = null; // マウスホイールでの疑似スクロール確定待ちタイマー
 
 /* #gantt自体の高さを「画面の残り高さ」に合わせる。.cal-stickyのすぐ下から
-   画面下端までを表示領域とする */
+   画面下端までを表示領域とするが、FAB(タスクを追加ボタン)のクリアランス
+   分(.wrapの下端パディング)は表の外側の余白として残すため、その分だけ
+   高さを短くする(表の内部にスクロール末尾の空白を作らないため) */
 function applyGanttViewportHeight() {
   const box = document.getElementById("gantt");
   if (!box) return;
-  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge())}px`;
+  const wrap = document.querySelector(".wrap");
+  const wrapBottomGap = wrap ? parseFloat(getComputedStyle(wrap).paddingBottom) || 0 : 0;
+  box.style.height = `${Math.max(120, window.innerHeight - ganttTopEdge() - wrapBottomGap)}px`;
 }
 
 /* #tab-headerの自然な高さ(畳める最大量)を測り直す。style.heightで縮めて
