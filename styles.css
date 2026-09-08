@@ -496,6 +496,7 @@ body[data-view="gantt"] #fixedbars {
   align-items: center;
   margin-bottom: 10px;
 }
+.cal-nav2 .search-box { flex: 1; }
 .cal-month { font-size: 17px; font-weight: 700; }
 
 .cal-dow {

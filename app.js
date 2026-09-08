@@ -11,7 +11,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v120"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v121"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -605,10 +605,10 @@ function switchView(v) {
     const headerInner = document.getElementById("tab-header-inner");
     if (headerInner) headerInner.style.transform = "";
   }
-  /* 計画タブに入るたびに「選択日のタスクのみ表示」の対象を最新化する
+  /* 計画タブに入るたびに、選択中の日付による絞り込みの対象を最新化する
      (前回タブを離れてからの変更を反映するため。タブ滞在中の個々のマーク
      編集では更新しない、recomputeSelDayVisible()のコメント参照) */
-  if (v === "gantt" && selDayOnly) recomputeSelDayVisible();
+  if (v === "gantt" && selDate !== null) recomputeSelDayVisible();
   if (v === "gantt" && view !== "gantt") {
     /* 別タブから計画タブに入るときは、#tab-headerが畳まれていない
        (タブバーが全部見える)状態から始める。gHeaderMaxはまだ測定して
@@ -1409,10 +1409,9 @@ function renderDayClose() {
 
 /* ---------- 描画:統合ガント(計画モード) ---------- *//* ---------- 描画:統合ガント(計画モード) ---------- */
 let showArch = localStorage.getItem("hisho:ui:showarch") === "1";
-let selDayOnly = localStorage.getItem("hisho:ui:seldayonly") === "1";
 
 /* タスクtが日付dkに関係する(実施日・予備日・周期の自動予定・自動予備日の
-   いずれかがある)かどうか。「選択日のタスクのみ表示」の絞り込みに使う。
+   いずれかがある)かどうか。日付見出しをタップして選択したときの絞り込みに使う。
    summary(見出し)行自体はマークを持たないため、配下(子孫、入れ子のsummary
    も再帰的に)にマークのある行が1つでもあれば関係ありとする */
 function taskRelevantToDate(t, dk) {
@@ -1426,15 +1425,33 @@ function taskRelevantToDate(t, dk) {
   return false;
 }
 
-/* 「選択日のタスクのみ表示」の表示対象タスクidの一覧。マスのタップ/長押し編集/
-   ドラッグ移動でカレンダーを操作しても、この一覧はその場では更新しない(誤って
-   マークを消した、あるいはマークを変更する途中で一時的に空欄を通過しただけの
-   可能性があるため、対象から外れた行をその場で消してしまわないようにする)。
-   日付の選択が変わったときやチェックを入れた直後など、明示的なタイミングだけで
-   recomputeSelDayVisible()を呼んで更新する */
+/* 選択中の日付(日付見出しをタップして選ぶ)による絞り込みの表示対象タスクid
+   一覧。マスのタップ/長押し編集/ドラッグ移動でカレンダーを操作しても、この
+   一覧はその場では更新しない(誤ってマークを消した、あるいはマークを変更
+   する途中で一時的に空欄を通過しただけの可能性があるため、対象から外れた
+   行をその場で消してしまわないようにする)。日付の選択が変わったときなど、
+   明示的なタイミングだけでrecomputeSelDayVisible()を呼んで更新する。
+   selDateがnull(日付が選択されていない)ときはこの絞り込み自体を適用しない */
 let selDayVisibleIds = null;
 function recomputeSelDayVisible() {
-  selDayVisibleIds = new Set(state.tasks.filter((t) => taskRelevantToDate(t, selDate)).map((t) => t.id));
+  selDayVisibleIds = selDate === null
+    ? null
+    : new Set(state.tasks.filter((t) => taskRelevantToDate(t, selDate)).map((t) => t.id));
+}
+
+/* ガント表のタスク名検索(半角/全角スペース区切りの複数キーワードAND検索、
+   大文字小文字を区別しない)。マーク操作とは無関係な絞り込みのため、
+   選択日の絞り込みと違いスナップショットにせず、入力のたびに即座に反映する */
+let gTaskSearch = "";
+function ganttSearchKeywords() {
+  return gTaskSearch.trim().split(/[\s　]+/).filter(Boolean).map((k) => k.toLowerCase());
+}
+/* タスクt自身のタイトルが全キーワードを含むか、配下(子孫)にそういうタスクが
+   1つでもあれば表示対象とする(taskRelevantToDateと同じ「祖先も文脈として
+   表示する」考え方をキーワード検索にも適用したもの) */
+function taskMatchesSearch(t, keywords) {
+  if (keywords.every((k) => t.title.toLowerCase().includes(k))) return true;
+  return state.tasks.some((c) => c.parentId === t.id && taskMatchesSearch(c, keywords));
 }
 let openIssueIds = new Set(JSON.parse(localStorage.getItem("hisho:ui:openissues") || "[]"));
 function saveOpenIssues() {
@@ -1454,13 +1471,16 @@ function saveCollapsed() {
   localStorage.setItem("hisho:ui:collapsed", JSON.stringify([...collapsedIds]));
 }
 
-function renderGantt(refreshVisibility) {
+function renderGantt(refreshVisibility, scrollToTodayLeft) {
   const box = document.getElementById("gantt");
   const archChk = document.getElementById("g-showarch");
   if (archChk) archChk.checked = showArch;
-  const seldayChk = document.getElementById("g-selday-only");
-  if (seldayChk) seldayChk.checked = selDayOnly;
-  if (selDayOnly && (refreshVisibility || !selDayVisibleIds)) recomputeSelDayVisible();
+  const searchInput = document.getElementById("g-task-search");
+  if (searchInput && searchInput.value !== gTaskSearch) searchInput.value = gTaskSearch;
+  const searchClearBtn = document.getElementById("g-search-clear");
+  if (searchClearBtn) searchClearBtn.classList.toggle("hidden", !gTaskSearch);
+  if (selDate !== null && (refreshVisibility || !selDayVisibleIds)) recomputeSelDayVisible();
+  const searchKeywords = ganttSearchKeywords();
 
   if (!state.tasks.length) {
     box.innerHTML = `<div class="g-empty">課題タブでタスクを登録すると、ここで日付マスをタップして割り当てられます。</div>`;
@@ -1528,7 +1548,8 @@ function renderGantt(refreshVisibility) {
       .forEach((t) => {
         const hideThis =
           (!showArch && isTaskArchived(t)) || // アーカイブのみ非表示(完了でも未アーカイブなら表示)
-          (selDayOnly && !(selDayVisibleIds && selDayVisibleIds.has(t.id))); // 選択日のタスクのみ表示(スナップショット)
+          (selDate !== null && !(selDayVisibleIds && selDayVisibleIds.has(t.id))) || // 選択中の日付での絞り込み(スナップショット)
+          (searchKeywords.length > 0 && !taskMatchesSearch(t, searchKeywords)); // タスク名検索(即時反映)
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
@@ -1636,7 +1657,10 @@ function renderGantt(refreshVisibility) {
 
   const sc = box.querySelector(".g-scroll");
   if (sc) {
-    if (keepLeft !== null) sc.scrollLeft = keepLeft;
+    /* 「今日へ」ボタンでは、今日の列がちょうど一番左に来るようにする
+       (前回のスクロール位置は引き継がない) */
+    if (scrollToTodayLeft && tdIdx >= 0) sc.scrollLeft = Math.max(0, tdIdx * G_COLW);
+    else if (keepLeft !== null) sc.scrollLeft = keepLeft;
     else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
   }
   /* 日付見出し行(.g-track-head-inner)は.g-scrollの外に出したため、
@@ -2272,8 +2296,21 @@ document.addEventListener("wheel", (e) => {
   if (e.target.closest(".overlay")) return;
   if (e.target.closest("input, textarea, select")) return;
   if (!e.target.closest("#gantt")) return;
+  /* Shift+ホイールは横スクロールとして扱う。ブラウザによってはShiftキーを
+     押しながらのホイールを自動的にdeltaXへ変換してくれる(その場合は下の
+     deltaX/deltaY比較だけで横スクロールに譲れる)が、環境によっては変換
+     されずdeltaYのまま来ることがあるため、e.shiftKeyを直接見て明示的に
+     .g-scrollのscrollLeftを動かす */
+  if (e.shiftKey) {
+    const scroller = document.querySelector("#gantt .g-scroll");
+    if (scroller) {
+      e.preventDefault();
+      scroller.scrollLeft += e.deltaX || e.deltaY;
+    }
+    return;
+  }
   if (e.target.closest(".g-scroll, .g-side")) {
-    // 表本体上でのShift+ホイール/横方向ホイールは横スクロールに譲る
+    // 表本体上での横方向ホイールは横スクロールに譲る
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
   }
   e.preventDefault();
@@ -3459,10 +3496,18 @@ document.addEventListener("click", (e) => {
   /* ガント */
   else if (action === "g-prev") { gStart = addDays(gStart, -14); renderGantt(); }
   else if (action === "g-next") { gStart = addDays(gStart, 14); renderGantt(); }
-  else if (action === "g-today") { gStart = addDays(todayKey(), -7); selDate = todayKey(); renderGantt(true); }
+  else if (action === "g-today") {
+    gStart = addDays(todayKey(), -7);
+    selDate = todayKey();
+    renderGantt(true, true); // 今日の列を一番左に表示する
+  }
   else if (action === "g-selday") {
-    selDate = btn.dataset.date;
+    /* 選択中の日付をもう一度タップすると選択を解除する(絞り込みも解除) */
+    selDate = selDate === btn.dataset.date ? null : btn.dataset.date;
     renderGantt(true);
+  } else if (action === "g-search-clear") {
+    gTaskSearch = "";
+    renderGantt();
   } else if (action === "g-cell") {
     if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
   } else if (action === "gc-icon-tap") {
@@ -3632,17 +3677,29 @@ document.addEventListener("input", (e) => {
   }
 });
 
+let gSearchTimer = null;
+document.addEventListener("input", (e) => {
+  if (e.target.id === "g-task-search") {
+    clearTimeout(gSearchTimer);
+    gSearchTimer = setTimeout(() => {
+      gTaskSearch = e.target.value;
+      const focused = document.activeElement;
+      renderGantt();
+      if (focused && focused.id === "g-task-search") {
+        const el = document.getElementById("g-task-search");
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 200);
+  }
+});
+
 document.addEventListener("change", (e) => {
   if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
   if (e.target.id === "g-showarch") {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
     renderGantt();
-  }
-  if (e.target.id === "g-selday-only") {
-    selDayOnly = e.target.checked;
-    localStorage.setItem("hisho:ui:seldayonly", selDayOnly ? "1" : "0");
-    renderGantt(true);
   }
 });
 

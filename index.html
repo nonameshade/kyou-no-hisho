@@ -101,7 +101,11 @@
           <button class="ibtn" data-action="g-help" aria-label="操作方法">i</button>
         </div>
         <div class="cal-nav2">
-          <label class="chk"><input type="checkbox" id="g-selday-only">選択日のタスクのみ表示</label>
+          <div class="search-box">
+            <span class="search-ico">🔍</span>
+            <input type="search" id="g-task-search" placeholder="タスク名で検索(スペース区切りで複数指定)" autocomplete="off">
+            <button class="search-clear hidden" id="g-search-clear" data-action="g-search-clear">×</button>
+          </div>
         </div>
       </div>
       <div id="cal-sticky-spacer" style="height:0px;"></div>
