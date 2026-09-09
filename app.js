@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v130"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v131"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1831,166 +1831,37 @@ document.addEventListener("pointerdown", (e) => {
   hideNameTip();
 });
 
-/* ---------- 並べ替えドラッグ(課題カード・タスク行) ---------- */
-let sortDrag = null;
-let sortAutoScrollSpeed = 0;
-let sortAutoScrollRAF = null;
+/* ---------- 課題タブ:長押しドラッグでの並べ替え・複製メニュー・横スワイプ(統合) ----------
+   以前はハンドル(.drag-h)を掴んだ瞬間にドラッグが始まる方式(並べ替え)と、
+   カード本体を横スワイプするとアーカイブボタンが出る方式(swipe)が、別々の
+   pointerdownリスナーとして共存していた(ハンドルという別要素上でしか
+   発火しないため互いに競合しなかった)。今回ハンドルを廃止し、カード/行
+   本体を今日タブと同じ「長押しで掴む」方式の並べ替え起点にしたため、
+   同じ要素の同じpointerdownを長押しドラッグと横スワイプの両方が奪い合う
+   ことになり、1つの状態機械に統合する必要が生じた。
 
-function sortAutoScrollTick() {
-  if (!sortDrag || !sortAutoScrollSpeed) { sortAutoScrollRAF = null; return; }
-  window.scrollBy(0, sortAutoScrollSpeed);
-  /* ポインタが止まっていてもページだけ動く分、基準点をずらしてカードを指の位置に留める */
-  sortDrag.py -= sortAutoScrollSpeed;
-  applySortDragPosition();
-  sortAutoScrollRAF = requestAnimationFrame(sortAutoScrollTick);
-}
-
-/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする */
-function updateSortAutoScroll(clientY) {
-  const EDGE = 70; // この距離まで端に近づいたらスクロール開始
-  const MAX_SPEED = 9; // 最大速度(px/フレーム)
-  const vh = window.innerHeight;
-  let speed = 0;
-  if (clientY < EDGE) {
-    speed = -MAX_SPEED * (1 - clientY / EDGE);
-  } else if (clientY > vh - EDGE) {
-    speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
-  }
-  sortAutoScrollSpeed = speed;
-  if (speed && !sortAutoScrollRAF) sortAutoScrollRAF = requestAnimationFrame(sortAutoScrollTick);
-}
-
-function stopSortAutoScroll() {
-  sortAutoScrollSpeed = 0;
-  if (sortAutoScrollRAF) { cancelAnimationFrame(sortAutoScrollRAF); sortAutoScrollRAF = null; }
-}
-
-function sortCandidates(d) {
-  if (d.type === "issue") {
-    return [...document.querySelectorAll(".issue-card[data-issue]")].filter(
-      (el) => el.dataset.issue !== d.id
-    );
-  }
-  const dragged = taskById(d.id);
-  if (!dragged) return [];
-  return [...document.querySelectorAll(".p-row[data-task]")].filter((el) => {
-    if (el.dataset.task === d.id) return false;
-    const t = taskById(el.dataset.task);
-    if (!t) return false;
-    if ((t.parentId || null) !== (dragged.parentId || null)) return false;
-    if (!dragged.parentId && (t.issueId || null) !== (dragged.issueId || null)) return false;
-    return true;
-  });
-}
-
-function getDropLine() {
-  let l = document.getElementById("drop-line");
-  if (!l) {
-    l = document.createElement("div");
-    l.id = "drop-line";
-  }
-  return l;
-}
-
-document.addEventListener("pointerdown", (e) => {
-  const h = e.target.closest(".drag-h");
-  if (!h) return;
-  const issueEl = h.closest("[data-issue]");
-  const taskEl = h.closest("[data-task]");
-  if (!issueEl && !taskEl) return;
-  sortDrag = {
-    type: issueEl ? "issue" : "task",
-    id: issueEl ? issueEl.dataset.issue : taskEl.dataset.task,
-    el: issueEl || taskEl,
-    py: e.clientY,
-    curY: e.clientY,
-    moved: false,
-    idx: null,
-  };
-  sortDrag.el.classList.add("grabbed"); // 掴めた合図(押した瞬間に浮く)
-  try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
-});
-
-/* カードをポインタ位置に合わせて動かし、挿入ラインを更新する(自動スクロール中も毎フレーム呼ぶ) */
-function applySortDragPosition() {
-  sortDrag.el.style.transform = `translateY(${sortDrag.curY - sortDrag.py}px) scale(1.02)`;
-  const cands = sortCandidates(sortDrag);
-  if (!cands.length) return;
-  /* ポインタ位置と各要素の中央を比べて挿入位置を決める(上下で対称) */
-  let idx = 0;
-  cands.forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (r.top + r.height / 2 < sortDrag.curY) idx++;
-  });
-  sortDrag.idx = idx;
-  const line = getDropLine();
-  if (idx < cands.length) {
-    cands[idx].parentNode.insertBefore(line, cands[idx]);
-  } else {
-    const last = cands[cands.length - 1];
-    last.parentNode.insertBefore(line, last.nextSibling);
-  }
-}
-
-document.addEventListener("pointermove", (e) => {
-  if (!sortDrag) return;
-  if (!sortDrag.moved && Math.abs(e.clientY - sortDrag.py) > 6) {
-    sortDrag.moved = true;
-    sortDrag.el.classList.add("sorting");
-  }
-  if (!sortDrag.moved) return;
-  sortDrag.curY = e.clientY;
-  updateSortAutoScroll(e.clientY);
-  applySortDragPosition();
-});
-
-function sortPointerEnd() {
-  if (!sortDrag) return;
-  const d = sortDrag;
-  sortDrag = null;
-  stopSortAutoScroll();
-  d.el.classList.remove("sorting");
-  d.el.classList.remove("grabbed");
-  d.el.style.transform = "";
-  const line = document.getElementById("drop-line");
-  const cands = sortCandidates(d);
-  if (line) line.remove();
-  if (!d.moved) return;
-  suppressClick = true;
-  setTimeout(() => { suppressClick = false; }, 80);
-  if (d.idx === null || !cands.length) return;
-
-  if (d.type === "issue") {
-    const dragged = issueById(d.id);
-    if (!dragged) return;
-    const order = cands.map((el) => el.dataset.issue); // ドラッグ中の要素を除いた並び
-    order.splice(d.idx, 0, d.id);
-    state.issues = order.map((id) => issueById(id)).filter(Boolean);
-    save();
-    renderPlan();
-  } else {
-    const dragged = taskById(d.id);
-    if (!dragged) return;
-    state.tasks = state.tasks.filter((t) => t.id !== d.id);
-    if (d.idx < cands.length) {
-      const before = taskById(cands[d.idx].dataset.task);
-      const pos = state.tasks.indexOf(before);
-      state.tasks.splice(pos, 0, dragged);
-    } else {
-      const lastSib = taskById(cands[cands.length - 1].dataset.task);
-      const pos = state.tasks.indexOf(lastSib) + 1;
-      state.tasks.splice(pos, 0, dragged);
-    }
-    save();
-    renderPlan();
-  }
-}
-document.addEventListener("pointerup", sortPointerEnd);
-document.addEventListener("pointercancel", sortPointerEnd);
-
-/* ---------- スワイプでアーカイブ(課題タブのタスク行・課題カード) ---------- */
-let swipe = null;
+   1回のpointerdownからの分岐:
+   1. 短いタップ(450ms未満・8px未満): 何もしない(課題カードの開閉トグルは
+      既存のissue-openクリックハンドラがsuppressClickを見て自然に処理する)。
+   2. 長押し確定(450ms経過・8px未満)後、そのまま指を離す: 課題カードのみ
+      複製メニューを表示する(タスク行は何もしない)。
+   3. 長押し確定後にドラッグ: 今日タブのtlApplyGap方式(他のカードを
+      translateYでリアルタイムに動かして隙間を見せる)で並べ替える。
+   4. 450ms未満に8px以上・横方向優勢に動いた場合: 横スワイプ(アーカイブ
+      ボタン表示)に移行する。アーカイブスワイプが可能な行(.swipeable内)
+      に限る。
+   5. 450ms未満に8px以上・縦方向優勢に動いた場合: 何もしない(ページの
+      通常スクロールに譲る)。 */
+const PLAN_LONGPRESS_MS = 450;
+let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
+let planLongPressTimer = null;
+let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder }
+let planAutoScrollSpeed = 0;
+let planAutoScrollRAF = null;
+let swipe = null; // 横スワイプ確定後 { row, wrap, sx, sy, horiz, base, cur }
 let openSwipeRow = null;
+let planMenuAnchor = null; // 複製メニューを開いている対象カード要素
+let planMenuIssueId = null;
 
 function closeOpenSwipe() {
   if (openSwipeRow) {
@@ -2003,57 +1874,295 @@ function closeOpenSwipe() {
   }
 }
 
+/* gapIndexに応じて他のカード/行をずらして隙間を空ける(今日タブのtlApplyGap相当) */
+function applyPlanGap(gapIndex) {
+  const orig = planDrag.originalIndex;
+  planDrag.others.forEach((o, i) => {
+    let shift = 0;
+    if (gapIndex > orig && i >= orig && i < gapIndex) shift = -planDrag.height;
+    else if (gapIndex < orig && i >= gapIndex && i < orig) shift = planDrag.height;
+    o.el.style.transform = shift ? `translateY(${shift}px)` : "";
+  });
+  planDrag.gapIndex = gapIndex;
+}
+
+/* 現在の指位置に合わせて掴んでいる要素の見た目とgapIndexを更新する(今日タブのtlUpdateDragVisual相当) */
+function updatePlanDragVisual() {
+  planDrag.el.style.transform = `translateY(${planDrag.curY - planDrag.py}px)`;
+  const scrolled = window.scrollY - planDrag.scrollStart;
+  let idx = 0;
+  planDrag.others.forEach((o) => { if (o.midY - scrolled < planDrag.curY) idx++; });
+  if (idx !== planDrag.gapIndex) applyPlanGap(idx);
+}
+
+function planAutoScrollTick() {
+  if (!planDrag || !planAutoScrollSpeed) { planAutoScrollRAF = null; return; }
+  window.scrollBy(0, planAutoScrollSpeed);
+  updatePlanDragVisual();
+  planAutoScrollRAF = requestAnimationFrame(planAutoScrollTick);
+}
+
+/* 画面の上端/下端付近にポインタが来たらゆっくりスクロールする */
+function updatePlanAutoScroll(clientY) {
+  const EDGE = 70;
+  const MAX_SPEED = 9;
+  const vh = window.innerHeight;
+  let speed = 0;
+  if (clientY < EDGE) {
+    speed = -MAX_SPEED * (1 - clientY / EDGE);
+  } else if (clientY > vh - EDGE) {
+    speed = MAX_SPEED * (1 - (vh - clientY) / EDGE);
+  }
+  planAutoScrollSpeed = speed;
+  if (speed && !planAutoScrollRAF) planAutoScrollRAF = requestAnimationFrame(planAutoScrollTick);
+}
+
+function stopPlanAutoScroll() {
+  planAutoScrollSpeed = 0;
+  if (planAutoScrollRAF) { cancelAnimationFrame(planAutoScrollRAF); planAutoScrollRAF = null; }
+}
+
+function hidePlanMenu() {
+  const menu = document.getElementById("plan-menu");
+  if (menu) menu.style.display = "none";
+  planMenuAnchor = null;
+  planMenuIssueId = null;
+}
+
+/* 課題カードの複製メニュー(name-tipと同じ「浮動要素をJS生成、外側操作/タイムアウトで閉じる」方式) */
+function showPlanMenu(issue, anchor) {
+  if (!issue) return;
+  let menu = document.getElementById("plan-menu");
+  if (!menu) {
+    menu = document.createElement("div");
+    menu.id = "plan-menu";
+    menu.innerHTML = `<button type="button" data-action="issue-duplicate">複製</button>`;
+    document.body.appendChild(menu);
+  }
+  planMenuAnchor = anchor;
+  planMenuIssueId = issue.id;
+  menu.style.display = "block";
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  const x = Math.max(8 + window.scrollX, Math.min(r.left + window.scrollX, window.scrollX + window.innerWidth - w - 8));
+  menu.style.left = `${x}px`;
+  menu.style.top = `${r.top + window.scrollY - h - 6}px`; // 対象カードの真上に表示
+}
+
+document.addEventListener("pointerdown", (e) => {
+  const menu = document.getElementById("plan-menu");
+  if (!menu || menu.style.display !== "block") return;
+  if (planMenuAnchor && planMenuAnchor.contains(e.target)) return;
+  if (e.target.closest("#plan-menu")) return;
+  hidePlanMenu();
+});
+
+/* 長押し確定:今日タブのtlStartDrag相当。要素をposition:fixedにして指に追従させ、
+   元の位置には高さ保持用のプレースホルダーを置く */
+function planStartDrag(p) {
+  const { type, id, el } = p;
+  let allInclSelf = [...document.querySelectorAll(type === "issue" ? ".issue-card[data-issue]" : ".p-row[data-task]")];
+  if (type === "task") {
+    const dragged = taskById(id);
+    allInclSelf = allInclSelf.filter((x) => {
+      if (x === el) return true;
+      const t = taskById(x.dataset.task);
+      if (!t || !dragged) return false;
+      if ((t.parentId || null) !== (dragged.parentId || null)) return false;
+      if (!dragged.parentId && (t.issueId || null) !== (dragged.issueId || null)) return false;
+      return true;
+    });
+  }
+  allInclSelf.forEach((x) => { x.style.transition = "none"; x.style.transform = ""; });
+  void el.parentNode.offsetHeight; // 直前のtransition/transform解除を確実に反映させてから測定する
+
+  const rect = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  const height = rect.height + (parseFloat(style.marginBottom) || 0);
+  const originalIndex = allInclSelf.indexOf(el);
+  const others = allInclSelf
+    .filter((x) => x !== el)
+    .map((x) => {
+      const r = x.getBoundingClientRect();
+      return { el: x, midY: r.top + r.height / 2 };
+    });
+
+  const placeholder = document.createElement("div");
+  placeholder.className = "plan-drag-placeholder";
+  placeholder.style.height = `${height}px`;
+  el.parentNode.insertBefore(placeholder, el);
+
+  planDrag = {
+    type, id, el, height, originalIndex, others,
+    gapIndex: originalIndex,
+    startX: p.px, startY: p.py,
+    py: p.py, curX: p.px, curY: p.py,
+    scrollStart: window.scrollY,
+    placeholder,
+  };
+
+  el.style.position = "fixed";
+  el.style.left = `${rect.left}px`;
+  el.style.top = `${rect.top}px`;
+  el.style.width = `${rect.width}px`;
+  el.style.margin = "0";
+  el.style.zIndex = "50";
+  el.classList.add("plan-dragging");
+  try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (planDrag) planDrag.others.forEach((o) => { o.el.style.transition = ""; });
+    });
+  });
+}
+
 document.addEventListener("pointerdown", (e) => {
   if (view !== "plan") return;
-  if (e.target.closest("button") || e.target.closest(".drag-h") || e.target.closest(".caret")) return;
-  const row = e.target.closest(".swipeable > .swipe-target");
-  if (openSwipeRow && openSwipeRow !== row) closeOpenSwipe();
-  if (!row) return;
-  swipe = {
-    row,
-    wrap: row.closest(".swipe-wrap"),
-    sx: e.clientX,
-    sy: e.clientY,
-    horiz: null,
-    base: row === openSwipeRow ? -88 : 0, // 開いた状態から右スワイプで戻せるように基点を持つ
-    cur: null,
+  if (e.target.closest("button") || e.target.closest(".caret") || e.target.closest("input, textarea, select")) return;
+  const el = e.target.closest(".swipe-target");
+  if (openSwipeRow && openSwipeRow !== el) closeOpenSwipe();
+  if (!el) return;
+  clearTimeout(planLongPressTimer);
+  const type = el.dataset.issue !== undefined ? "issue" : "task";
+  const id = type === "issue" ? el.dataset.issue : el.dataset.task;
+  planPending = {
+    type, id, el,
+    px: e.clientX, py: e.clientY,
+    swipeable: !!el.closest(".swipeable"), // アーカイブ済みの行/カードは横スワイプ対象外
+    swipeBase: el === openSwipeRow ? -88 : 0, // 開いた状態から右スワイプで戻せるように基点を持つ
   };
+  planLongPressTimer = setTimeout(() => {
+    if (planPending) planStartDrag(planPending);
+    planPending = null;
+  }, PLAN_LONGPRESS_MS);
 });
 
 document.addEventListener("pointermove", (e) => {
-  if (!swipe) return;
-  const dx = e.clientX - swipe.sx;
-  const dy = e.clientY - swipe.sy;
-  if (swipe.horiz === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-    swipe.horiz = Math.abs(dx) > Math.abs(dy);
-    if (!swipe.horiz) { swipe = null; return; }
-    swipe.row.style.transition = "none";
-    if (swipe.wrap) swipe.wrap.classList.add("show-action"); // スワイプ中だけボタンを見せる
+  if (view !== "plan") return;
+  if (planPending) {
+    const dx = e.clientX - planPending.px;
+    const dy = e.clientY - planPending.py;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+      clearTimeout(planLongPressTimer);
+      if (planPending.swipeable && Math.abs(dx) > Math.abs(dy)) {
+        swipe = {
+          row: planPending.el,
+          wrap: planPending.el.closest(".swipe-wrap"),
+          sx: planPending.px,
+          sy: planPending.py,
+          horiz: null,
+          base: planPending.swipeBase,
+          cur: null,
+        };
+      }
+      planPending = null;
+    }
+    return;
   }
-  if (!swipe.horiz) return;
-  swipe.cur = Math.max(-110, Math.min(0, swipe.base + dx));
-  swipe.row.style.transform = `translateX(${swipe.cur}px)`; // 指に追随(枠は変形させない)
+  if (swipe) {
+    const dx = e.clientX - swipe.sx;
+    const dy = e.clientY - swipe.sy;
+    if (swipe.horiz === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      swipe.horiz = Math.abs(dx) > Math.abs(dy);
+      if (!swipe.horiz) { swipe = null; return; }
+      swipe.row.style.transition = "none";
+      if (swipe.wrap) swipe.wrap.classList.add("show-action"); // スワイプ中だけボタンを見せる
+    }
+    if (!swipe.horiz) return;
+    swipe.cur = Math.max(-110, Math.min(0, swipe.base + dx));
+    swipe.row.style.transform = `translateX(${swipe.cur}px)`; // 指に追随(枠は変形させない)
+    return;
+  }
+  if (planDrag) {
+    planDrag.curX = e.clientX;
+    planDrag.curY = e.clientY;
+    updatePlanAutoScroll(e.clientY);
+    updatePlanDragVisual();
+  }
 });
 
-function swipePointerEnd() {
-  if (!swipe) return;
-  const s = swipe;
-  swipe = null;
-  if (s.horiz === null) return;
+function planPointerEnd() {
+  clearTimeout(planLongPressTimer);
+  planPending = null;
+
+  if (swipe) {
+    const s = swipe;
+    swipe = null;
+    if (s.horiz === null) return;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+    s.row.style.transition = "transform .18s ease"; // 戻すときもアニメーション
+    if (s.cur !== null && s.cur < -55) {
+      s.row.style.transform = "translateX(-88px)";
+      openSwipeRow = s.row;
+    } else {
+      s.row.style.transform = "";
+      if (openSwipeRow === s.row) openSwipeRow = null;
+      if (s.wrap) setTimeout(() => { if (openSwipeRow !== s.row) s.wrap.classList.remove("show-action"); }, 200);
+    }
+    return;
+  }
+
+  if (!planDrag) return;
+  const d = planDrag;
+  planDrag = null;
+  stopPlanAutoScroll();
+  d.el.classList.remove("plan-dragging");
+  d.el.style.position = "";
+  d.el.style.left = "";
+  d.el.style.top = "";
+  d.el.style.width = "";
+  d.el.style.margin = "";
+  d.el.style.zIndex = "";
+  d.el.style.transform = "";
+  if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
+  d.others.forEach((o) => { o.el.style.transform = ""; });
+
+  /* 長押し確定後、指をほぼ動かさずに離した場合(=8px未満)は「並べ替えドラッグ
+     ではなく長押しそのもの」とみなし、課題カードなら複製メニューを表示する
+     (タスク行は何もしない)。gapIndexが元のままかどうかではなく実際の指の
+     移動量で判定するのは、一度動かしてから元の位置に戻して離した場合は
+     複製メニューではなく通常のドラッグ確定として扱いたいため */
+  const heldStill = Math.abs(d.curX - d.startX) < 8 && Math.abs(d.curY - d.startY) < 8;
+  if (heldStill) {
+    if (d.type === "issue") {
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 80);
+      showPlanMenu(issueById(d.id), d.el);
+    }
+    return;
+  }
+
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 80);
-  s.row.style.transition = "transform .18s ease"; // 戻すときもアニメーション
-  if (s.cur !== null && s.cur < -55) {
-    s.row.style.transform = "translateX(-88px)";
-    openSwipeRow = s.row;
+
+  if (d.type === "issue") {
+    const order = d.others.map((o) => o.el.dataset.issue);
+    order.splice(d.gapIndex, 0, d.id);
+    state.issues = order.map((id) => issueById(id)).filter(Boolean);
+    save();
+    renderPlan();
   } else {
-    s.row.style.transform = "";
-    if (openSwipeRow === s.row) openSwipeRow = null;
-    if (s.wrap) setTimeout(() => { if (openSwipeRow !== s.row) s.wrap.classList.remove("show-action"); }, 200);
+    const dragged = taskById(d.id);
+    if (dragged) {
+      state.tasks = state.tasks.filter((t) => t.id !== d.id);
+      if (d.gapIndex < d.others.length) {
+        const before = taskById(d.others[d.gapIndex].el.dataset.task);
+        const pos = state.tasks.indexOf(before);
+        state.tasks.splice(pos, 0, dragged);
+      } else {
+        const lastSib = taskById(d.others[d.others.length - 1].el.dataset.task);
+        const pos = state.tasks.indexOf(lastSib) + 1;
+        state.tasks.splice(pos, 0, dragged);
+      }
+      save();
+      renderPlan();
+    }
   }
 }
-document.addEventListener("pointerup", swipePointerEnd);
-document.addEventListener("pointercancel", swipePointerEnd);
+document.addEventListener("pointerup", planPointerEnd);
+document.addEventListener("pointercancel", planPointerEnd);
 
 /* ---------- マークのドラッグ移動 ---------- *//* ---------- マークのドラッグ移動 ---------- */
 let drag = null;
@@ -2521,7 +2630,6 @@ function tabSwipeExcluded(target) {
   return !!(
     target.closest("#gantt") ||
     target.closest(".swipe-target") ||
-    target.closest(".drag-h") ||
     target.closest("#timeline .t-card") ||
     target.closest("input, textarea, select")
   );
@@ -2743,7 +2851,6 @@ function renderTaskTree(roots, visible) {
       <div class="swipe-wrap${t.archived ? "" : " swipeable"}">
         ${t.archived ? "" : `<div class="swipe-action"><button data-action="task-archive" data-id="${t.id}">📦<br>アーカイブ</button></div>`}
         <div class="p-row swipe-target" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue) : "transparent"}">
-          <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
           ${caret}
           <div class="p-main">
             <div class="p-title ${t.done ? "done-task" : ""}">${archTag}${marks}${esc(t.title)}</div>
@@ -2825,7 +2932,6 @@ function renderPlan() {
             ${issueArchived ? "" : `<div class="swipe-action"><button data-action="issue-archive" data-id="${g.id}">📦<br>アーカイブ</button></div>`}
             <div class="issue-card swipe-target" data-issue="${g.id}" style="border-left-color:${c}">
               <div class="issue-top" data-action="issue-open" data-id="${g.id}">
-                <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
                 <span class="caret">${open ? "▾" : "▸"}</span>
                 <div style="flex:1;min-width:0;">
                   <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)} <span class="issue-status s-${g.status || "todo"}">${statusLabel}</span></div>
@@ -3684,6 +3790,19 @@ document.addEventListener("click", (e) => {
   } else if (action === "i-color-pick") {
     editingIssueColor = btn.dataset.color;
     renderColorRow();
+  } else if (action === "issue-duplicate") {
+    const src = planMenuIssueId ? issueById(planMenuIssueId) : null;
+    hidePlanMenu();
+    if (src) {
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.id = uid("g");
+      copy.title = `${src.title}(コピー)`;
+      copy.archived = false;
+      const idx = state.issues.indexOf(src);
+      state.issues.splice(idx + 1, 0, copy);
+      save();
+      renderPlan();
+    }
   }
 
   /* タスク原本 */

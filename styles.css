@@ -1113,19 +1113,33 @@ input[type="date"], input[type="time"] {
   line-height: 1.5;
 }
 
-/* 並べ替えドラッグ */
-.drag-h {
-  color: var(--line);
-  font-size: 13px;
-  letter-spacing: -2px;
-  cursor: grab;
-  touch-action: none;
-  flex-shrink: 0;
-  padding: 4px 2px;
-  user-select: none;
+/* 課題カードの長押し複製メニュー(#name-tipと同じ浮動要素方式だが、
+   ボタンをタップできる必要があるためpointer-eventsは有効にする) */
+#plan-menu {
+  position: absolute;
+  z-index: 200;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(23,33,43,.28);
+  display: none;
+  overflow: hidden;
 }
-.p-row:hover .drag-h, .issue-top:hover .drag-h { color: var(--muted); }
-.sorting { opacity: .45; }
+#plan-menu button {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+#plan-menu button:active { background: var(--bg); }
+
 .drop-hint { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
 
 /* 課題カード内のタスク */
@@ -1223,28 +1237,15 @@ input[type="date"], input[type="time"] {
 .overrun-popup-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
 .overrun-popup-body { font-size: 12.5px; line-height: 1.6; opacity: .95; }
 
-/* 並べ替え:掴んだカードと挿入ライン */
+/* 並べ替え:今日タブの長押しドラッグ(.tl-dragging)と同じ方式。他のカード/行は
+   隙間を空けるためにtransformで動く(.p-row/.issue-cardのtransitionで滑らかに追従) */
 .p-row, .issue-card { transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; }
-.sorting {
-  opacity: .55;
-  transform: scale(1.02);
+.plan-dragging {
+  transition: none;
+  z-index: 50;
   box-shadow: 0 10px 26px rgba(23,33,43,.28);
-  position: relative;
 }
-.swipe-target.sorting, .swipe-target.grabbed { z-index: 5; }
-#drop-line {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--accent);
-  margin: 3px 6px;
-  transform-origin: left center;
-  animation: dropline .16s ease;
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-@keyframes dropline {
-  from { transform: scaleX(0); opacity: 0; }
-  to { transform: scaleX(1); opacity: 1; }
-}
+.plan-drag-placeholder { margin: 0; }
 
 /* ---------- フェーズ9:日付ナビ・締め・パンくず・追随ドラッグ ---------- */
 #name-tip { position: absolute; }
@@ -1259,14 +1260,6 @@ input[type="date"], input[type="time"] {
   pointer-events: none;
 }
 .g-cell.locked-cell { cursor: default; opacity: .7; }
-
-/* 掴んだ瞬間とドラッグ追随 */
-.grabbed {
-  transform: scale(1.02);
-  box-shadow: 0 6px 18px rgba(23,33,43,.2);
-  position: relative;
-}
-.sorting { transition: none; } /* 追随はtransformで直接動かすためアニメを切る */
 
 .g-scell .caret { width: 18px; font-size: 11px; }
 
