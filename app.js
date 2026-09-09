@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v131"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v132"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1636,10 +1636,9 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
             !children.length &&
             !state.assignments.some((a) => a.taskId === t.id);
           sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" style="padding-left:${4 + depth * 14}px"
-                 title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">
+            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" style="padding-left:${4 + depth * 14}px" data-task="${t.id}">
               ${caretG}
-              <span class="g-name">${rec}${esc(t.title)}</span>
+              <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
               ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
             </div>`);
           trackRows.push(`<div class="g-trow">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
@@ -1810,11 +1809,15 @@ function showNameTip(text, anchor) {
   showNameTip._anchor = anchor;
   tip.textContent = text;
   tip.style.display = "block";
-  /* タップした行の真上に、ページ座標で固定(スクロールに追随し、ずれが蓄積しない) */
+  /* タップしたタスク名の真上に、テキストの開始位置を揃えて表示する(ページ座標で
+     固定し、スクロールに追随してずれが蓄積しないようにする)。anchor(.g-name)の
+     左端=タスク名の文字の開始位置そのものなので、チップ自身の左パディング(12px、
+     #name-tipのpadding: 8px 12px参照)分だけ差し引けば、チップの枠ではなく
+     中のテキストの位置が揃う */
   const r = anchor.getBoundingClientRect();
   const w = tip.offsetWidth;
   const h = tip.offsetHeight;
-  const x = Math.max(8 + window.scrollX, Math.min(r.left + window.scrollX, window.scrollX + window.innerWidth - w - 8));
+  const x = Math.max(8 + window.scrollX, Math.min(r.left + window.scrollX - 12, window.scrollX + window.innerWidth - w - 8));
   tip.style.left = `${x}px`;
   tip.style.top = `${r.top + window.scrollY - h - 6}px`;
   clearTimeout(showNameTip._t);
@@ -2618,10 +2621,47 @@ document.addEventListener("contextmenu", (e) => {
   openGcellForm(cell.dataset.task, cell.dataset.date);
 });
 
+/* ---------- ガントのタスク名長押し:タスクを編集 ---------- */
+/* .g-cellの長押し(上記)と全く同じパターン。.g-scellの本体(タスク名の
+   ツールチップ用タップ領域=.g-name含む)を長押しすると、マス単位の割り当て
+   編集ではなく、タスク原本そのものの編集フォーム(#task-form、課題タブの
+   「編集」ボタンと同じもの)を開く。同じpointerdownから独立してタイマーを
+   走らせるのは.g-cellの場合と同じ理由(縦フェイクスクロールの判定と
+   競合させないため) */
+let gNamePressTimer = null;
+let gNamePressStart = null; // { x, y, taskId }
+const GNAME_LONGPRESS_MS = 500;
+
+document.addEventListener("pointerdown", (e) => {
+  if (view !== "gantt") return;
+  const cell = e.target.closest(".g-scell");
+  if (!cell || !cell.dataset.task || e.target.closest(".caret")) return;
+  gNamePressStart = { x: e.clientX, y: e.clientY, taskId: cell.dataset.task };
+  clearTimeout(gNamePressTimer);
+  gNamePressTimer = setTimeout(() => {
+    if (!gNamePressStart) return;
+    const { taskId } = gNamePressStart;
+    gNamePressStart = null;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+    const t = taskById(taskId);
+    if (t) openTaskForm(t, null);
+  }, GNAME_LONGPRESS_MS);
+});
+document.addEventListener("pointermove", (e) => {
+  if (!gNamePressStart) return;
+  if (Math.abs(e.clientX - gNamePressStart.x) > 8 || Math.abs(e.clientY - gNamePressStart.y) > 8) {
+    clearTimeout(gNamePressTimer);
+    gNamePressStart = null;
+  }
+});
+document.addEventListener("pointerup", () => { clearTimeout(gNamePressTimer); gNamePressStart = null; });
+document.addEventListener("pointercancel", () => { clearTimeout(gNamePressTimer); gNamePressStart = null; });
+
 /* ---------- 横スワイプでのタブ切り替え ---------- */
 /* 今日/計画/課題タブを横スワイプで切り替える。既に横方向の操作が
    割り当てられている領域(ガントの横スクロール・マークのドラッグ、課題タブの
-   アーカイブスワイプ、並べ替えハンドル、今日タブのカード)は対象外にし、
+   長押しドラッグ/複製/アーカイブスワイプ、今日タブのカード)は対象外にし、
    既存の操作を優先する。全画面フォーム表示中(lockBodyScroll中)も対象外 */
 const TAB_ORDER = ["today", "gantt", "plan"];
 let tabSwipe = null; // { startX, startY, curX, horiz, el }
@@ -3761,9 +3801,14 @@ document.addEventListener("click", (e) => {
     openTaskForm(null, null, id);
   } else if (action === "g-showname") {
     if (suppressClick) return;
-    /* タスク名が省略されず全部表示されている場合はツールチップを出さない */
-    const nameEl = btn.querySelector(".g-name");
-    if (nameEl && nameEl.scrollWidth <= nameEl.clientWidth + 1) return;
+    /* data-action="g-showname"は.g-name自身に付いている(btn === .g-name)。
+       タスク名が省略されず全部表示されている場合はツールチップを出さない */
+    if (btn.scrollWidth <= btn.clientWidth + 1) return;
+    /* タスク名全体ではなく、省略記号(…)が表示されている右端付近をタップした
+       場合だけツールチップを出す(CSSのellipsisは実体を持つ要素ではないため、
+       右端からの距離で近似する) */
+    const r = btn.getBoundingClientRect();
+    if (r.right - e.clientX > 22) return;
     showNameTip(btn.dataset.name, btn);
   } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
