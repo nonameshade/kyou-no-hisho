@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v133"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v134"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -494,26 +494,6 @@ function releaseWake() {
   }
 }
 
-function createSingleTask(title, defStart, estimateMin) {
-  const t = {
-    id: uid("t"),
-    title: title.trim(),
-    parentId: null,
-    issueId: null,
-    type: "single",
-    estimateMin: Math.max(1, Number(estimateMin) || 25),
-    defStart: defStart || "09:00",
-    planStart: null,
-    planEnd: null,
-    recurrence: null,
-    reserveRule: null,
-    done: false,
-    createdDate: todayKey(),
-  };
-  state.tasks.push(t);
-  return t;
-}
-
 /* 今日タブへのタスク追加で開始時刻が未入力の時のデフォルト値。
    今日の最後のカード(開始時刻が一番遅いもの)の終了時刻(開始+見積)を返す。
    今日にまだ何もなければnullを返す */
@@ -522,24 +502,6 @@ function lastTodayEnd() {
   if (!list.length) return null;
   const last = list[list.length - 1];
   return minToHm(hmToMin(last.start) + (last.estimateMin || 0));
-}
-
-function addAdhoc(title, start, estimateMin) {
-  if (!execEditable(viewDate)) return;
-  const t = createSingleTask(title, start, estimateMin); // 課題タブ・計画タブにも出るよう原本を作る
-  state.assignments.push({
-    id: uid("a"),
-    taskId: t.id,
-    title: t.title,
-    date: viewDate,
-    start,
-    estimateMin: t.estimateMin,
-    status: "todo",
-    spentSec: 0,
-    startedAt: null,
-  });
-  save();
-  renderAll();
 }
 
 /* ---------- 課題 ---------- */
@@ -3082,6 +3044,7 @@ function addTargetRow(rank, text, doneAt) {
     <input type="text" class="rank" placeholder="S" maxlength="6" value="${esc(rank || "")}">
     <input type="text" class="ttext" placeholder="例: 新規レビュー投稿数 50" maxlength="120" value="${esc(text || "")}">
     <input type="date" class="tdone" title="達成日" value="${esc(doneAt || "")}">
+    <button type="button" class="search-clear tdone-clear" data-action="target-clear-date" aria-label="達成日をクリア">×</button>
     <button class="sbtn muted" data-action="target-remove">×</button>`;
   box.appendChild(row);
 }
@@ -3093,16 +3056,10 @@ let editingIssueColor = null;
 
 function renderColorRow() {
   const box = document.getElementById("i-color-row");
-  const swatches = ISSUE_COLORS.map(
+  box.innerHTML = ISSUE_COLORS.map(
     (c) =>
       `<button type="button" class="color-swatch ${editingIssueColor === c ? "on" : ""}" style="background:${c}" data-action="i-color-pick" data-color="${c}" aria-label="${c}"></button>`
   ).join("");
-  const customOn = editingIssueColor && !ISSUE_COLORS.includes(editingIssueColor);
-  box.innerHTML = `
-    ${swatches}
-    <label class="color-swatch color-swatch-custom ${customOn ? "on" : ""}" style="${customOn ? `background:${editingIssueColor}` : ""}">
-      <input type="color" id="i-color-custom" value="${editingIssueColor || "#0E7C66"}">
-    </label>`;
 }
 
 function openIssueForm(issue) {
@@ -3192,6 +3149,13 @@ function updateRecVisibility() {
   const rs = document.getElementById("t-rsmode").value;
   document.getElementById("rs-n").classList.toggle("hidden", rs !== "after" && rs !== "before");
   document.getElementById("rs-wd").classList.toggle("hidden", rs !== "weekday");
+  /* 「今日に追加する」は新規作成時、かつ単発/不定期タスクの時だけ表示する
+     (周期タスクは自動予定、サマリーはそもそも実行対象ではないため対象外) */
+  const showToday = !editingTaskId && (type === "single" || type === "irregular");
+  const todayRow = document.getElementById("t-today-row");
+  todayRow.classList.toggle("hidden", !showToday);
+  const todayChk = document.getElementById("t-today");
+  document.getElementById("t-today-start-row").classList.toggle("hidden", !showToday || !todayChk.checked);
 }
 
 /* 今日タブの鉛筆アイコンから開く簡易編集。タスク自体ではなく、この日の割り当て
@@ -3250,6 +3214,13 @@ function openTaskForm(task, parentId, presetIssueId) {
     document.querySelectorAll("#rec-weekly input").forEach((cb) => (cb.checked = false));
   }
   document.getElementById("task-delete-row").classList.toggle("hidden", !task);
+  /* 「今日に追加する」は新規作成時のみ(既存タスクの編集では出さない)。
+     #add-formのcanTodayと同じロジックで既定チェック/無効化する */
+  const todayChk = document.getElementById("t-today");
+  const canToday = !task && execEditable(viewDate);
+  todayChk.checked = canToday;
+  todayChk.disabled = !canToday;
+  document.getElementById("t-today-start").value = "";
   updateRecVisibility();
   document.getElementById("task-form").classList.remove("hidden");
   document.getElementById("fab").classList.add("hidden");
@@ -3311,14 +3282,28 @@ function saveTaskForm() {
     notes: document.getElementById("t-notes").value.trim(),
   };
   let savedId;
+  let isNew = false;
   if (editingTaskId) {
     Object.assign(taskById(editingTaskId), data);
     savedId = editingTaskId;
   } else {
+    isNew = true;
     savedId = uid("t");
     state.tasks.push({ id: savedId, done: false, createdDate: todayKey(), ...data });
   }
   editingTaskId = null;
+  /* 「今日に追加する」がチェックされていれば、#add-formのadd-confirmと同じ
+     要領で割り当ても作成する(新規作成・単発/不定期タスクのみが対象、
+     updateRecVisibility()の表示条件と揃える) */
+  const todayChk = document.getElementById("t-today");
+  const addToday = isNew && !todayChk.disabled && todayChk.checked && (type === "single" || type === "irregular");
+  if (addToday) {
+    const start = document.getElementById("t-today-start").value || lastTodayEnd() || nowHM();
+    state.assignments.push({
+      id: uid("a"), taskId: savedId, title, date: viewDate, start,
+      estimateMin: data.estimateMin, status: "todo", spentSec: 0, startedAt: null,
+    });
+  }
   document.getElementById("task-form").classList.add("hidden");
   document.getElementById("fab").classList.remove("hidden");
   unlockBodyScroll();
@@ -3345,6 +3330,10 @@ function saveTaskForm() {
     }
   }
   renderPlan();
+  /* 「今日に追加する」を使った場合、今日タブ(または計画タブ)が表示中なら
+     そちらにも即座に反映させる(renderPlan()は課題タブのDOMしか更新しない
+     ため)。renderAll()は現在表示中のタブに応じた再描画を行う */
+  if (addToday) renderAll();
   /* 保存したタスクの位置までスクロールして一瞬ハイライト。キャンセル時と同様、
      アニメーションは表示せず即座に元の(あるいは新しい)スクロール位置に移動する
      (保存によって展開/絞り込みが変わり、キャンセル時よりも大きくスクロール
@@ -3703,46 +3692,6 @@ document.addEventListener("click", (e) => {
     document.getElementById("asg-edit-form").classList.add("hidden");
     unlockBodyScroll();
   }
-  else if (action === "add-open") {
-    document.getElementById("add-form").classList.remove("hidden");
-    document.getElementById("fab").classList.add("hidden");
-    syncFixedOffset(); // 全画面フォームの開始位置(ヘッダー直下)を最新化
-    lockBodyScroll();
-    /* 開始時刻は未入力をデフォルトにする。空のまま入力補助(ネイティブの時刻選択)を
-       開くと、ブラウザ標準の挙動で現在時刻が基準として表示される */
-    document.getElementById("f-start").value = "";
-    /* 今日タブで、閲覧中の日が編集可能な時だけ「今日に追加する」を選べる。それ以外はタスク登録のみ */
-    const canToday = execEditable(viewDate);
-    const todayChk = document.getElementById("f-today");
-    todayChk.checked = canToday;
-    todayChk.disabled = !canToday;
-    document.getElementById("f-today-row").classList.toggle("hidden", !canToday);
-    document.getElementById("f-title").focus();
-  } else if (action === "add-cancel") {
-    document.getElementById("add-form").classList.add("hidden");
-    document.getElementById("fab").classList.remove("hidden");
-    unlockBodyScroll();
-  } else if (action === "add-confirm") {
-    const title = document.getElementById("f-title").value;
-    if (!title.trim()) return;
-    const startInput = document.getElementById("f-start").value;
-    const est = document.getElementById("f-est").value;
-    const todayChk = document.getElementById("f-today");
-    if (todayChk.checked && !todayChk.disabled) {
-      /* 開始時刻が未入力なら、今日の最後のカードの終了時刻(開始+見積)を
-         自動設定する。今日にまだ何もなければ現在時刻にする */
-      const start = startInput || lastTodayEnd() || nowHM();
-      addAdhoc(title, start, est);
-    } else {
-      createSingleTask(title, startInput, est);
-      save();
-      renderAll();
-    }
-    document.getElementById("f-title").value = "";
-    document.getElementById("add-form").classList.add("hidden");
-    unlockBodyScroll();
-    document.getElementById("fab").classList.remove("hidden");
-  }
 
   /* タブ */
   else if (action === "tab") switchView(btn.dataset.tab);
@@ -3852,6 +3801,9 @@ document.addEventListener("click", (e) => {
     addTargetRow("", "");
   } else if (action === "target-remove") {
     btn.closest(".target-row").remove();
+  } else if (action === "target-clear-date") {
+    const dateInput = btn.closest(".target-row").querySelector(".tdone");
+    if (dateInput) dateInput.value = "";
   } else if (action === "i-color-pick") {
     editingIssueColor = btn.dataset.color;
     renderColorRow();
@@ -4013,15 +3965,11 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", (e) => {
-  if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode") updateRecVisibility();
+  if (e.target.id === "t-type" || e.target.id === "t-rkind" || e.target.id === "t-rsmode" || e.target.id === "t-today") updateRecVisibility();
   if (e.target.id === "g-showarch") {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
     renderGantt();
-  }
-  if (e.target.id === "i-color-custom") {
-    editingIssueColor = e.target.value;
-    renderColorRow();
   }
 });
 

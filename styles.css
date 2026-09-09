@@ -816,9 +816,10 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 .target-row input.rank { width: 56px; flex-shrink: 0; text-align: center; }
 .target-row input.ttext { flex: 1; }
 .target-row input.tdone { flex-shrink: 0; width: 130px; }
+.target-row .tdone-clear { flex-shrink: 0; }
 .target-row .sbtn { flex-shrink: 0; }
 
-/* 課題の色選択(6色パレット+自由なカラーピッカー) */
+/* 課題の色選択(6色パレットのみ) */
 .color-row { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
 .color-swatch {
   width: 28px;
@@ -830,22 +831,6 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   display: block;
 }
 .color-swatch.on { border-color: var(--ink); }
-.color-swatch-custom {
-  background: var(--bg) !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.color-swatch-custom input[type="color"] {
-  width: 44px;
-  height: 44px;
-  border: none;
-  padding: 0;
-  margin: -8px;
-  cursor: pointer;
-  background: transparent;
-}
 
 /* ---------- フェーズ5:2ペインガント・予備日・ドラッグ ---------- */
 .g-wrap2 { display: flex; align-items: stretch; height: 100%; }
