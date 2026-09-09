@@ -10,6 +10,7 @@
   --alert-soft: #FBE9E7;
   --overrun-bg: #FDF4F3; /* 見積超過時の背景色。カード重複表示(--alert-soft)より薄くして区別する */
   --done: #9AA4AE;
+  --warn: #E0A458; /* ガントの「未予定」表示(.g-scell.unsched)と同じ色。同期中ドットにも使う */
   --mono: "SF Mono", "Menlo", "Consolas", monospace;
 }
 
@@ -315,18 +316,52 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
   * { transition: none !important; }
 }
 
-/* ---------- 同期(フェーズ2) ---------- */
+/* ---------- 同期(フェーズ2、出納帳アプリのヘッダー仕様を参考にドット表示へ刷新) ---------- */
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted); /* idle=未接続/未同期 */
+  flex-shrink: 0;
+}
+.sync-dot[data-state="syncing"] {
+  background: var(--warn);
+  animation: syncBlink 1s ease-in-out infinite;
+}
+.sync-dot[data-state="done"] { background: var(--accent); }
+.sync-dot[data-state="error"] { background: var(--alert); }
+@keyframes syncBlink {
+  50% { opacity: .5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-dot { animation: none !important; }
+}
 .sync-status {
   display: inline-block;
   min-width: 3.5em;
   font-size: 11px;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: underline dotted;
+  color: var(--ink);
+  opacity: .7;
   white-space: nowrap;
   text-align: right;
 }
-.sync-status.err { color: var(--alert); font-weight: 700; }
+.sync-status.err { color: var(--alert); opacity: 1; font-weight: 700; }
+.settings-gear {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px;
+  margin: -4px -4px -4px 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.settings-gear:active { color: var(--ink); }
 .f-label { display: block; font-size: 11.5px; color: var(--muted); margin-top: 10px; }
 .f-label input { margin-top: 4px; }
 

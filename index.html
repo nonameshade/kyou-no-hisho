@@ -18,12 +18,21 @@
   <div id="fixedbars">
     <div id="fixed-stats">
       <div class="stats" id="stats"></div>
-      <div class="sync-status" id="sync-status" data-action="settings-open">未同期</div>
+      <div class="sync-row">
+        <span class="sync-dot" id="sync-dot" data-state="idle"></span>
+        <span class="sync-status" id="sync-status">未同期</span>
+      </div>
+      <button class="settings-gear" id="settings-gear" data-action="settings-open" aria-label="設定">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10 2.8v1.7M10 15.5v1.7M17.2 10h-1.7M4.5 10H2.8M14.9 5.1l-1.2 1.2M6.3 13.7l-1.2 1.2M14.9 14.9l-1.2-1.2M6.3 6.3 5.1 5.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
     <div id="mini-timer" class="hidden" data-action="mini-jump">
+      <button id="mt-toggle" data-action="mt-toggle">再開</button>
       <button id="mt-warn" class="hidden" data-action="mt-warn-tap">⚠</button>
       <span id="mt-text"></span>
-      <button id="mt-toggle" data-action="mt-toggle">再開</button>
     </div>
   </div>
   <div id="overrun-popup" class="hidden">
