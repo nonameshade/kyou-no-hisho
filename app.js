@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v132"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v133"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1853,14 +1853,20 @@ document.addEventListener("pointerdown", (e) => {
    4. 450ms未満に8px以上・横方向優勢に動いた場合: 横スワイプ(アーカイブ
       ボタン表示)に移行する。アーカイブスワイプが可能な行(.swipeable内)
       に限る。
-   5. 450ms未満に8px以上・縦方向優勢に動いた場合: 何もしない(ページの
-      通常スクロールに譲る)。 */
+   5. 450ms未満に8px以上・縦方向優勢に動いた場合: 手動スクロール代行
+      (planScrollFallback)に切り替える。.swipe-targetはtouch-action:noneの
+      ため(不具合Aの対策、下記)ブラウザはネイティブスクロールしてくれない。
+      今日タブのtlScrollFallbackと同じ考え方だが、#timeline-headのような
+      sticky吸着の複雑さが無いぶんシンプルに、指の動きにそのまま追従する
+      だけで慣性(モーメンタム)は付けない。 */
 const PLAN_LONGPRESS_MS = 450;
 let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
 let planLongPressTimer = null;
 let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder }
 let planAutoScrollSpeed = 0;
 let planAutoScrollRAF = null;
+let planScrollFallback = false; // 手動スクロール代行中か(不具合A対策)
+let planScrollLastY = 0;
 let swipe = null; // 横スワイプ確定後 { row, wrap, sx, sy, horiz, base, cur }
 let openSwipeRow = null;
 let planMenuAnchor = null; // 複製メニューを開いている対象カード要素
@@ -2058,9 +2064,22 @@ document.addEventListener("pointermove", (e) => {
           base: planPending.swipeBase,
           cur: null,
         };
+      } else {
+        /* 縦方向優勢(またはアーカイブスワイプ対象外の行での横方向の動き):
+           .swipe-targetはtouch-action:noneのためブラウザは代わりにスクロール
+           してくれない。指の動きぶんをこちらで手動スクロールする */
+        planScrollFallback = true;
+        planScrollLastY = e.clientY;
       }
       planPending = null;
     }
+    return;
+  }
+  if (planScrollFallback) {
+    e.preventDefault();
+    const dy = e.clientY - planScrollLastY;
+    planScrollLastY = e.clientY;
+    window.scrollBy(0, -dy);
     return;
   }
   if (swipe) {
@@ -2088,6 +2107,7 @@ document.addEventListener("pointermove", (e) => {
 function planPointerEnd() {
   clearTimeout(planLongPressTimer);
   planPending = null;
+  planScrollFallback = false;
 
   if (swipe) {
     const s = swipe;

@@ -1365,7 +1365,14 @@ input[type="date"], input[type="time"] {
   cursor: pointer;
   line-height: 1.5;
 }
-.swipe-target { position: relative; z-index: 1; touch-action: pan-y; will-change: transform; }
+/* touch-action:noneにする理由は今日タブの.t-card(styles.css内の同種コメント参照)と同じ:
+   pan-yを許可すると指がわずかに動いた時点でブラウザがネイティブスクロールと判定し、
+   長押しが確定してJS側がドラッグを開始してもpointercancelで打ち切られてしまう。
+   縦スクロールが必要な場合はJS側のplanScrollFallback(app.js)で代行する。
+   will-change:transformは付けない(課題カード自身が.swipe-targetのため、開いている
+   課題カードの内部にあるタスク行をposition:fixedにすると、ビューポートではなく
+   このwill-changeを持つ祖先が包含ブロックになってしまい位置がずれる不具合があった) */
+.swipe-target { position: relative; z-index: 1; touch-action: none; }
 
 /* スナックバー */
 #snackbar {
