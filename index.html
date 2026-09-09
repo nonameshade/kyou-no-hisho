@@ -186,9 +186,23 @@
       <label class="f-label">目的
         <input type="text" id="i-purpose" placeholder="例: Vineユーザーに選ばれること" maxlength="120">
       </label>
-      <label class="f-label">期日
-        <input type="date" id="i-deadline">
+      <div class="form-row">
+        <label class="f-label">開始日
+          <input type="date" id="i-startdate">
+        </label>
+        <label class="f-label">期日
+          <input type="date" id="i-deadline">
+        </label>
+      </div>
+      <label class="f-label">状況
+        <select id="i-status">
+          <option value="todo">未着手</option>
+          <option value="doing">進行中</option>
+          <option value="done">完了</option>
+        </select>
       </label>
+      <div class="f-label">色</div>
+      <div id="i-color-row" class="color-row"></div>
       <div class="f-label">目標(ランク別)</div>
       <div id="target-rows"></div>
       <button class="sbtn muted" data-action="target-add" style="margin-top:8px;">+ 目標を追加</button>

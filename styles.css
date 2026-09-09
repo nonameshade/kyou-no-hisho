@@ -789,6 +789,20 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   color: #fff;
   flex-shrink: 0;
 }
+.rank-done { font-size: 11px; color: var(--accent); font-weight: 700; }
+.issue-status {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  vertical-align: middle;
+}
+.issue-status.s-doing { background: var(--accent-soft); color: var(--accent); }
+.issue-status.s-done { background: var(--done); color: #fff; }
 .issue-foot {
   display: flex;
   justify-content: space-between;
@@ -801,7 +815,37 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 .target-row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .target-row input.rank { width: 56px; flex-shrink: 0; text-align: center; }
 .target-row input.ttext { flex: 1; }
+.target-row input.tdone { flex-shrink: 0; width: 130px; }
 .target-row .sbtn { flex-shrink: 0; }
+
+/* 課題の色選択(6色パレット+自由なカラーピッカー) */
+.color-row { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  display: block;
+}
+.color-swatch.on { border-color: var(--ink); }
+.color-swatch-custom {
+  background: var(--bg) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.color-swatch-custom input[type="color"] {
+  width: 44px;
+  height: 44px;
+  border: none;
+  padding: 0;
+  margin: -8px;
+  cursor: pointer;
+  background: transparent;
+}
 
 /* ---------- フェーズ5:2ペインガント・予備日・ドラッグ ---------- */
 .g-wrap2 { display: flex; align-items: stretch; height: 100%; }

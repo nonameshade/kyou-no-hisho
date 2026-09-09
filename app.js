@@ -1,7 +1,8 @@
 /* ============================================================
    今日の秘書 — app.js(フェーズ4)
-   データ構造 v3:
-     issues:      課題 [{id, title, purpose, deadline, targets:[{rank,text}]}]
+   データ構造 v6:
+     issues:      課題 [{id, title, purpose, startDate, deadline, status,
+                   color, targets:[{rank,text,doneAt}]}]
      tasks:       タスク原本 [{id, title, parentId, issueId, type,
                    estimateMin, defStart, planStart, planEnd,
                    recurrence, done, createdDate}]
@@ -11,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v129"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v130"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -64,7 +65,7 @@ const uid = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}
 const ISSUE_COLORS = ["#0E7C66", "#3D5A9E", "#B0692B", "#8A4E9E", "#3F7A3F", "#A8455C"];
 
 /* ---------- 状態 ---------- */
-let state = { v: 5, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
+let state = { v: 6, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
 let wakeLock = null;
 let overNotifiedId = null;
 let renderedCurrentId = null;
@@ -88,7 +89,7 @@ function load() {
   } catch (e) {
     console.error("読み込みに失敗しました", e);
   }
-  if (!state || typeof state !== "object") state = { v: 5, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
+  if (!state || typeof state !== "object") state = { v: 6, updatedAt: 0, issues: [], tasks: [], assignments: [], skips: [], reserves: [], closedDates: [] };
   migrate();
 }
 
@@ -138,6 +139,15 @@ function migrate() {
     state.closedDates = [];
     state.v = 5;
   }
+  if (state.v < 6) {
+    (state.issues || []).forEach((g) => {
+      if (g.startDate === undefined) g.startDate = null;
+      if (g.status === undefined) g.status = "todo";
+      if (g.color === undefined) g.color = null;
+      (g.targets || []).forEach((t) => { if (t.doneAt === undefined) t.doneAt = null; });
+    });
+    state.v = 6;
+  }
   if (!Array.isArray(state.issues)) state.issues = [];
   if (!Array.isArray(state.tasks)) state.tasks = [];
   if (!Array.isArray(state.assignments)) state.assignments = [];
@@ -165,7 +175,10 @@ function save() {
 /* ---------- 参照ヘルパー ---------- */
 const taskById = (id) => state.tasks.find((t) => t.id === id) || null;
 const issueById = (id) => state.issues.find((g) => g.id === id) || null;
-const issueColor = () => "#0E7C66"; // 課題ごとの色分けは廃止(並べ替えで色が変わるのを防ぐ)
+/* 課題ごとの色。以前はインデックス依存のパレット参照で「並べ替えると色が変わる」
+   不具合があり廃止された経緯があるため、必ず課題オブジェクト自身が持つ
+   永続化されたcolorフィールド(なければ既定色)を返す形にする */
+const issueColor = (issue) => (issue && issue.color) || "#0E7C66";
 const isTaskArchived = (t) =>
   !!t.archived || !!(t.issueId && (issueById(t.issueId) || {}).archived);
 
@@ -1562,7 +1575,7 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
           (searchKeywords.length > 0 && !taskMatchesSearch(t, searchKeywords)); // タスク名検索(即時反映)
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
-          const color = t.issueId ? issueColor(t.issueId) : "#0E7C66";
+          const color = t.issueId ? issueColor(issueById(t.issueId)) : "#0E7C66";
           const prog = depth === 0 ? progressOf(t) : null;
           const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
 
@@ -2729,7 +2742,7 @@ function renderTaskTree(roots, visible) {
     const row = `
       <div class="swipe-wrap${t.archived ? "" : " swipeable"}">
         ${t.archived ? "" : `<div class="swipe-action"><button data-action="task-archive" data-id="${t.id}">📦<br>アーカイブ</button></div>`}
-        <div class="p-row swipe-target" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue.id) : "transparent"}">
+        <div class="p-row swipe-target" data-task="${t.id}" style="margin-left:${depth * 18}px;border-left-color:${issue ? issueColor(issue) : "transparent"}">
           <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
           ${caret}
           <div class="p-main">
@@ -2778,20 +2791,22 @@ function renderPlan() {
           const cnt = issueArchived
             ? state.tasks.filter((t) => t.issueId === g.id).length
             : state.tasks.filter((t) => t.issueId === g.id && visible.has(t.id)).length;
-          const c = issueColor(g.id);
+          const c = issueColor(g);
           const open = searching || openIssueIds.has(g.id);
           let dl = "";
-          if (g.deadline) {
-            const rest = diffDays(g.deadline, tk);
-            const cls = rest < 0 ? "over" : rest <= 7 ? "near" : "";
-            const label = rest < 0 ? `期限超過 ${-rest}日` : rest === 0 ? "今日が期日" : `あと${rest}日`;
-            dl = `<span class="issue-deadline ${cls}">${g.deadline.replaceAll("-", "/")} ・ ${label}</span>`;
+          if (g.deadline || g.startDate) {
+            const rest = g.deadline ? diffDays(g.deadline, tk) : null;
+            const cls = rest === null ? "" : rest < 0 ? "over" : rest <= 7 ? "near" : "";
+            const label = rest === null ? "" : rest < 0 ? `期限超過 ${-rest}日` : rest === 0 ? "今日が期日" : `あと${rest}日`;
+            const range = `${g.startDate ? g.startDate.replaceAll("-", "/") + " 〜 " : ""}${g.deadline ? g.deadline.replaceAll("-", "/") : ""}`;
+            dl = `<span class="issue-deadline ${cls}">${range}${label ? " ・ " + label : ""}</span>`;
           }
+          const statusLabel = { todo: "未着手", doing: "進行中", done: "完了" }[g.status || "todo"];
           const targets = (g.targets || [])
-            .map(
-              (t) =>
-                `<div class="issue-target"><span class="rank-chip" style="background:${c}">${esc(t.rank)}</span><span>${esc(t.text)}</span></div>`
-            )
+            .map((t) => {
+              const done = t.doneAt ? `<span class="rank-done">✓ ${esc(t.doneAt.replaceAll("-", "/"))}</span>` : "";
+              return `<div class="issue-target"><span class="rank-chip" style="background:${c}">${esc(t.rank)}</span><span>${esc(t.text)}</span>${done}</div>`;
+            })
             .join("");
           const body = open
             ? `
@@ -2813,7 +2828,7 @@ function renderPlan() {
                 <span class="drag-h" title="ドラッグで並べ替え">⋮⋮</span>
                 <span class="caret">${open ? "▾" : "▸"}</span>
                 <div style="flex:1;min-width:0;">
-                  <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)}</div>
+                  <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)} <span class="issue-status s-${g.status || "todo"}">${statusLabel}</span></div>
                   ${!open ? `<div class="issue-purpose">タスク ${cnt}件</div>` : ""}
                 </div>
                 ${issueArchived ? `<button class="sbtn" data-action="issue-unarchive" data-id="${g.id}">解除</button>` : dl}
@@ -2893,15 +2908,35 @@ function renderAll() {
 }
 
 /* ---------- 課題フォーム ---------- */
-function addTargetRow(rank, text) {
+function addTargetRow(rank, text, doneAt) {
   const box = document.getElementById("target-rows");
   const row = document.createElement("div");
   row.className = "target-row";
   row.innerHTML = `
     <input type="text" class="rank" placeholder="S" maxlength="6" value="${esc(rank || "")}">
     <input type="text" class="ttext" placeholder="例: 新規レビュー投稿数 50" maxlength="120" value="${esc(text || "")}">
+    <input type="date" class="tdone" title="達成日" value="${esc(doneAt || "")}">
     <button class="sbtn muted" data-action="target-remove">×</button>`;
   box.appendChild(row);
+}
+
+/* 課題の色: 既存6色パレットのスウォッチ+自由なカラーピッカーの両方から選べる。
+   選択中の色はeditingIssueColorに保持し、フォームの開閉をまたいで
+   保存されない一時状態として扱う(保存時にstate.issues側へ書き込む) */
+let editingIssueColor = null;
+
+function renderColorRow() {
+  const box = document.getElementById("i-color-row");
+  const swatches = ISSUE_COLORS.map(
+    (c) =>
+      `<button type="button" class="color-swatch ${editingIssueColor === c ? "on" : ""}" style="background:${c}" data-action="i-color-pick" data-color="${c}" aria-label="${c}"></button>`
+  ).join("");
+  const customOn = editingIssueColor && !ISSUE_COLORS.includes(editingIssueColor);
+  box.innerHTML = `
+    ${swatches}
+    <label class="color-swatch color-swatch-custom ${customOn ? "on" : ""}" style="${customOn ? `background:${editingIssueColor}` : ""}">
+      <input type="color" id="i-color-custom" value="${editingIssueColor || "#0E7C66"}">
+    </label>`;
 }
 
 function openIssueForm(issue) {
@@ -2909,11 +2944,15 @@ function openIssueForm(issue) {
   document.getElementById("issue-form-title").textContent = issue ? "課題を編集" : "課題を追加";
   document.getElementById("i-title").value = issue ? issue.title : "";
   document.getElementById("i-purpose").value = issue ? issue.purpose || "" : "";
+  document.getElementById("i-startdate").value = issue ? issue.startDate || "" : "";
   document.getElementById("i-deadline").value = issue ? issue.deadline || "" : "";
+  document.getElementById("i-status").value = issue ? issue.status || "todo" : "todo";
+  editingIssueColor = issue ? issue.color || null : null;
+  renderColorRow();
   const box = document.getElementById("target-rows");
   box.innerHTML = "";
   const targets = issue && issue.targets && issue.targets.length ? issue.targets : [{ rank: "S", text: "" }, { rank: "A", text: "" }, { rank: "B", text: "" }];
-  targets.forEach((t) => addTargetRow(t.rank, t.text));
+  targets.forEach((t) => addTargetRow(t.rank, t.text, t.doneAt));
   document.getElementById("issue-delete-row").classList.toggle("hidden", !issue);
   document.getElementById("issue-form").classList.remove("hidden");
   document.getElementById("fab").classList.add("hidden");
@@ -2929,12 +2968,16 @@ function saveIssueForm() {
     .map((row) => ({
       rank: row.querySelector(".rank").value.trim(),
       text: row.querySelector(".ttext").value.trim(),
+      doneAt: row.querySelector(".tdone").value || null,
     }))
     .filter((t) => t.text);
   const data = {
     title,
     purpose: document.getElementById("i-purpose").value.trim(),
+    startDate: document.getElementById("i-startdate").value || null,
     deadline: document.getElementById("i-deadline").value || null,
+    status: document.getElementById("i-status").value,
+    color: editingIssueColor,
     targets,
   };
   if (editingIssueId) {
@@ -2943,6 +2986,7 @@ function saveIssueForm() {
     state.issues.push({ id: uid("g"), ...data });
   }
   editingIssueId = null;
+  editingIssueColor = null;
   document.getElementById("issue-form").classList.add("hidden");
   document.getElementById("fab").classList.remove("hidden");
   unlockBodyScroll();
@@ -3135,11 +3179,14 @@ function saveTaskForm() {
     }
   }
   renderPlan();
-  /* 保存したタスクの位置までスクロールして一瞬ハイライト */
+  /* 保存したタスクの位置までスクロールして一瞬ハイライト。キャンセル時と同様、
+     アニメーションは表示せず即座に元の(あるいは新しい)スクロール位置に移動する
+     (保存によって展開/絞り込みが変わり、キャンセル時よりも大きくスクロール
+     先が動くことがあるため、smoothだと目立つスクロールアニメーションになっていた) */
   requestAnimationFrame(() => {
     const el = document.querySelector(`.p-row[data-task="${savedId}"]`);
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.scrollIntoView({ block: "center" });
       el.classList.add("flash");
       setTimeout(() => el.classList.remove("flash"), 1200);
     }
@@ -3616,6 +3663,7 @@ document.addEventListener("click", (e) => {
   else if (action === "issue-edit") openIssueForm(issueById(id));
   else if (action === "issue-cancel") {
     editingIssueId = null;
+    editingIssueColor = null;
     document.getElementById("issue-form").classList.add("hidden");
     document.getElementById("fab").classList.remove("hidden");
     unlockBodyScroll();
@@ -3624,6 +3672,7 @@ document.addEventListener("click", (e) => {
     if (editingIssueId && confirm("この課題を削除しますか?(タスクは残ります)")) {
       removeIssue(editingIssueId);
       editingIssueId = null;
+      editingIssueColor = null;
       document.getElementById("issue-form").classList.add("hidden");
       document.getElementById("fab").classList.remove("hidden");
       unlockBodyScroll();
@@ -3632,6 +3681,9 @@ document.addEventListener("click", (e) => {
     addTargetRow("", "");
   } else if (action === "target-remove") {
     btn.closest(".target-row").remove();
+  } else if (action === "i-color-pick") {
+    editingIssueColor = btn.dataset.color;
+    renderColorRow();
   }
 
   /* タスク原本 */
@@ -3782,6 +3834,10 @@ document.addEventListener("change", (e) => {
     showArch = e.target.checked;
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
     renderGantt();
+  }
+  if (e.target.id === "i-color-custom") {
+    editingIssueColor = e.target.value;
+    renderColorRow();
   }
 });
 
