@@ -837,10 +837,11 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 /* touch-action:pan-xで縦方向のネイティブスクロールを無効にし、JS実装の
    縦フェイクスクロール(gScrollFallback、ネイティブの慣性スクロール中の
    JS実行遅延によるヘッダーのちらつき/追随遅れを避けるため)に横取りさせる。
-   横方向のネイティブpanはそのまま許可し、.g-scrollの横スクロールは従来通り。
-   display:flex; flex-direction:columnで「見出しセル(固定高さ)+本体
-   (残り全部)」の縦積みにする。overflow:hiddenで本体側(.g-side-body)の
-   はみ出しをここで切り抜く */
+   横方向のネイティブpanはそのまま許可する。タスク名+予定終了日の2カラム
+   構成にしたことで内容が.g-side自体の幅(170px)より広くなるため、
+   .g-side-clipが右側の.g-scrollと同じ方式でネイティブの横スクロールを
+   持つ。display:flex; flex-direction:columnで「見出し(固定高さ)+本体
+   (残り全部)」の縦積みにする */
 .g-side {
   width: 170px;
   min-width: 170px;
@@ -852,7 +853,12 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   flex-direction: column;
   overflow: hidden;
 }
-.g-side .g-scell.g-sh, .g-side .g-scell.g-ss { flex-shrink: 0; }
+/* 見出し(タスク/見積合計)。右側の.g-track-head/.g-track-head-clip/
+   .g-track-head-innerと同じ理由・同じ方式で、本体の横スクロール位置に
+   syncGanttSideHeadX()がtranslateXで追従させる */
+.g-side-head { flex-shrink: 0; }
+.g-side-head-clip { overflow: hidden; }
+.g-side-head-inner { will-change: transform; }
 .g-track-wrap {
   flex: 1;
   min-width: 0; /* flexアイテム内で子のoverflow-xを効かせる定番の指定 */
@@ -901,14 +907,37 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   border-top: 1px solid #EEF1F4;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px 0 10px;
   font-size: 12.5px;
   font-weight: 600;
   overflow: hidden;
   box-sizing: border-box;
 }
-.g-scell .g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* タスク名列(キャレット+タスク名)。幅はapp.jsのG_SIDE_NAME_Wと合わせること */
+.g-scell-name {
+  flex: 0 0 130px;
+  width: 130px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+/* 予定終了日列。幅はapp.jsのG_SIDE_END_Wと合わせること */
+.g-scell-end {
+  flex: 0 0 60px;
+  width: 60px;
+  padding: 0 8px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
+.g-scell .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-scell.done-task .g-name { text-decoration: line-through; color: var(--done); }
 .g-trow {
   position: relative;
@@ -1267,7 +1296,10 @@ input[type="date"], input[type="time"] {
   margin-top: 4px;
 }
 
-.g-scell.unsched { box-shadow: inset 3px 0 0 #E0A458; }
+/* 実施予定なしタスクの行全体を薄く着色する(タスク名列・日付トラック列の
+   両方。前者は既存の左端box-shadow・オレンジ文字も維持する) */
+.g-scell.unsched, .g-trow.unsched { background: rgba(224,164,88,.12); }
+.g-scell.unsched { box-shadow: inset 3px 0 0 var(--warn); }
 .g-scell.unsched .g-name { color: #B0692B; }
 
 .p-row.flash {
@@ -1394,27 +1426,31 @@ input[type="date"], input[type="time"] {
 .swipe-action { visibility: hidden; }
 .swipe-wrap.show-action .swipe-action { visibility: visible; }
 
-/* 左側(タスク名列)の見出しセル。.g-track-headと同じ理由で、以前はネイティブ
-   position:stickyを使っていたが、#gantt自体が画面の残り高さに固定された
-   表示領域になったため不要になった(#gantt/.g-track-headのコメント参照)。
-   .g-scell.g-ss(見積合計)はflex-direction:columnの中で.g-scell.g-shの
-   すぐ下に自然に並ぶため、以前のcalc(var(--gantt-head-top)+var(--gantt-head-
-   height))のような位置計算も不要になった */
+/* 左側(タスク名+予定終了日の2カラム)の見出しセル。.g-track-headと同じ理由で、
+   以前はネイティブposition:stickyを使っていたが、#gantt自体が画面の残り
+   高さに固定された表示領域になったため不要になった(#gantt/.g-track-head
+   のコメント参照)。.g-scell.g-ss(見積合計)は.g-scell.g-shのすぐ下に
+   自然に並ぶため、位置計算は不要 */
 .g-side .g-scell.g-sh, .g-side .g-scell.g-ss {
   background: var(--surface);
   box-shadow: 0 3px 8px rgba(23,33,43,.12);
   position: relative;
   z-index: 1;
 }
-/* .g-scrollと同じ役割の、動かない切り抜き用ビューポート。実際にtransformで
-   動かすのは中の.g-side-body(下記)であり、.g-side-clip自身は一切動かない
-   (この2要素を1つにまとめると、クリップ範囲と中身が一緒に動いてしまい
-   スクロールしても何も動いて見えなくなる。.g-scroll/.g-track-bodyの
-   分離と同じ理由で必ず分ける) */
+/* .g-scrollと同じ役割の、動かない縦方向の切り抜き用ビューポート。実際に
+   縦方向にtransformで動かすのは中の.g-side-body(下記)であり、.g-side-clip
+   自身は縦には一切動かない(この2要素を1つにまとめると、クリップ範囲と
+   中身が一緒に動いてしまいスクロールしても何も動いて見えなくなる。
+   .g-scroll/.g-track-bodyの分離と同じ理由で必ず分ける)。横方向は
+   .g-scrollと同じくここがネイティブスクロールのビューポートを兼ねる
+   (2カラム分の内容が.g-side自体の幅より広いときに横スクロールできる) */
 .g-side-clip {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
   position: relative;
 }
 /* 指でのフェイクスクロール中、実際にtransformで動かす本体側の要素

@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v134"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v135"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -81,6 +81,8 @@ let viewDate = todayKey(); // 今日タブで表示中の日付
 let gStart = addDays(todayKey(), -7);
 const G_DAYS = 42;
 const G_COLW = 26;
+const G_SIDE_NAME_W = 130; // 左カラム(タスク名列)の幅。styles.cssの.g-scell-nameと合わせること
+const G_SIDE_END_W = 60; // 左カラム(予定終了日列)の幅。styles.cssの.g-scell-endと合わせること
 
 function load() {
   try {
@@ -1473,6 +1475,9 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
   }
   const prevScroll = box.querySelector(".g-scroll");
   const keepLeft = prevScroll ? prevScroll.scrollLeft : null;
+  const prevSideScroll = box.querySelector(".g-side-clip");
+  const keepSideLeft = prevSideScroll ? prevSideScroll.scrollLeft : null;
+  const sideW = G_SIDE_NAME_W + G_SIDE_END_W;
 
   const days = [...Array(G_DAYS)].map((_, i) => addDays(gStart, i));
   const tk = todayKey();
@@ -1538,7 +1543,6 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
         if (!hideThis) {
           const children = state.tasks.filter((c) => c.parentId === t.id);
           const color = t.issueId ? issueColor(issueById(t.issueId)) : "#0E7C66";
-          const prog = depth === 0 ? progressOf(t) : null;
           const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
 
           let bar = "";
@@ -1592,18 +1596,23 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
           const caretG = children.length
             ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsedG ? "▸" : "▾"}</button>`
             : `<span class="caret ghost"></span>`;
+          /* 実施予定なし: 今日以降の実施日(●)が1件も無い(過去にしか実施予定が
+             無いタスクも「予定なし」扱いにする)。行全体を着色して分かりやすくする */
           const unsched =
             (t.type === "single" || t.type === "irregular") &&
             !t.done &&
             !children.length &&
-            !state.assignments.some((a) => a.taskId === t.id);
+            !state.assignments.some((a) => a.taskId === t.id && a.date >= tk);
+          const endLabel = t.planEnd ? esc(t.planEnd.slice(5).replace("-", "/")) : "";
           sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" style="padding-left:${4 + depth * 14}px" data-task="${t.id}">
-              ${caretG}
-              <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
-              ${prog !== null ? `<span class="g-prog">${prog}%</span>` : ""}
+            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" data-task="${t.id}">
+              <span class="g-scell-name" style="padding-left:${4 + depth * 14}px">
+                ${caretG}
+                <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
+              </span>
+              <span class="g-scell-end">${endLabel}</span>
             </div>`);
-          trackRows.push(`<div class="g-trow">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
+          trackRows.push(`<div class="g-trow ${unsched ? "unsched" : ""}">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
         }
         if (!collapsedIds.has(t.id)) walk(t.id, depth + 1);
       });
@@ -1613,10 +1622,16 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
   box.innerHTML = `
     <div class="g-wrap2">
       <div class="g-side">
-        <div class="g-scell g-sh">タスク</div>
-        <div class="g-scell g-ss">見積合計</div>
+        <div class="g-side-head">
+          <div class="g-side-head-clip">
+            <div class="g-side-head-inner" style="width:${sideW}px">
+              <div class="g-scell g-sh"><span class="g-scell-name">タスク</span><span class="g-scell-end">終了日</span></div>
+              <div class="g-scell g-ss"><span class="g-scell-name">見積合計</span><span class="g-scell-end"></span></div>
+            </div>
+          </div>
+        </div>
         <div class="g-side-clip">
-          <div class="g-side-body">
+          <div class="g-side-body" style="width:${sideW}px">
             ${sideRows.join("")}
           </div>
         </div>
@@ -1646,11 +1661,15 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
     else if (keepLeft !== null) sc.scrollLeft = keepLeft;
     else if (tdIdx >= 0) sc.scrollLeft = Math.max(0, (tdIdx - 3) * G_COLW);
   }
+  const sideSc = box.querySelector(".g-side-clip");
+  if (sideSc && keepSideLeft !== null) sideSc.scrollLeft = keepSideLeft;
   /* 日付見出し行(.g-track-head-inner)は.g-scrollの外に出したため、
      横スクロール位置を自分では追随しない。scrollLeft復元直後に
      一度だけ明示的に揃えておく(以後はsyncGanttTrackHeadX()が
-     .g-scrollのscrollイベントで追随させる) */
+     .g-scrollのscrollイベントで追随させる)。左カラムの見出しも同様に
+     syncGanttSideHeadX()で.g-side-clipに追随させる */
   syncGanttTrackHeadX();
+  syncGanttSideHeadX();
   applyGanttViewportHeight();
   /* renderGantt()はDOMを丸ごと作り直す(.g-side-body/.g-track-bodyも新しい
      要素になり、transformは初期状態=0に戻る)。gScrollTop自体は再描画をまたいで
@@ -1670,9 +1689,19 @@ function syncGanttTrackHeadX() {
   const headInner = document.querySelector("#gantt .g-track-head-inner");
   if (scroller && headInner) headInner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
 }
+/* 左カラム(タスク名+予定終了日の2カラム)の見出し行も、右側と同じ理由・
+   同じ方式で.g-side-clipの横スクロールに追従させる */
+function syncGanttSideHeadX() {
+  const scroller = document.querySelector("#gantt .g-side-clip");
+  const headInner = document.querySelector("#gantt .g-side-head-inner");
+  if (scroller && headInner) headInner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
+}
 {
   const box = document.getElementById("gantt");
-  if (box) box.addEventListener("scroll", syncGanttTrackHeadX, true);
+  if (box) {
+    box.addEventListener("scroll", syncGanttTrackHeadX, true);
+    box.addEventListener("scroll", syncGanttSideHeadX, true);
+  }
 }
 
 /* .cal-sticky(範囲選択ナビ)のすぐ下の位置。#gantt自身の高さ
@@ -2475,9 +2504,13 @@ document.addEventListener("wheel", (e) => {
      押しながらのホイールを自動的にdeltaXへ変換してくれる(その場合は下の
      deltaX/deltaY比較だけで横スクロールに譲れる)が、環境によっては変換
      されずdeltaYのまま来ることがあるため、e.shiftKeyを直接見て明示的に
-     .g-scrollのscrollLeftを動かす */
+     scrollLeftを動かす。マウスカーソルが左カラム(.g-side、タスク名+
+     予定終了日)の上にあれば左を、それ以外(右側の日付トラック)なら右を
+     スクロールする */
   if (e.shiftKey) {
-    const scroller = document.querySelector("#gantt .g-scroll");
+    const scroller = e.target.closest(".g-side")
+      ? document.querySelector("#gantt .g-side-clip")
+      : document.querySelector("#gantt .g-scroll");
     if (scroller) {
       e.preventDefault();
       scroller.scrollLeft += e.deltaX || e.deltaY;
@@ -3777,7 +3810,7 @@ document.addEventListener("click", (e) => {
        場合だけツールチップを出す(CSSのellipsisは実体を持つ要素ではないため、
        右端からの距離で近似する) */
     const r = btn.getBoundingClientRect();
-    if (r.right - e.clientX > 22) return;
+    if (r.right - e.clientX > 40) return;
     showNameTip(btn.dataset.name, btn);
   } else if (action === "issue-add") openIssueForm(null);
   else if (action === "issue-edit") openIssueForm(issueById(id));
