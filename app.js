@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v136"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v137"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1858,9 +1858,12 @@ document.addEventListener("pointerdown", (e) => {
    5. 450ms未満に8px以上・縦方向優勢に動いた場合: 手動スクロール代行
       (planScrollFallback)に切り替える。.swipe-targetはtouch-action:noneの
       ため(不具合Aの対策、下記)ブラウザはネイティブスクロールしてくれない。
-      今日タブのtlScrollFallbackと同じ考え方だが、#timeline-headのような
-      sticky吸着の複雑さが無いぶんシンプルに、指の動きにそのまま追従する
-      だけで慣性(モーメンタム)は付けない。 */
+      今日タブのtlScrollFallbackと全く同じ方式(指が触れている間は.wrapを
+      transformで見た目だけ動かし、実際のスクロール位置は指を離した瞬間に
+      一度だけ確定させる。window.scrollToは指が動いている間ずっと呼ぶと
+      レイアウトを伴う重い処理でタッチ追跡と競合し振動して見えるため)。
+      #timeline-headのようなsticky吸着の複雑さが無いぶんシンプルで、
+      慣性(モーメンタム)も付けない。 */
 const PLAN_LONGPRESS_MS = 450;
 let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
 let planLongPressTimer = null;
@@ -1868,7 +1871,9 @@ let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height
 let planAutoScrollSpeed = 0;
 let planAutoScrollRAF = null;
 let planScrollFallback = false; // 手動スクロール代行中か(不具合A対策)
-let planScrollLastY = 0;
+let planScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
+let planScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
+let planScrollMaxY = 0; // フォールバック開始時点でのスクロール可能な最大値(上下端のクランプ用)
 let planScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let planScrollRAF = null;
 let swipe = null; // 横スワイプ確定後 { row, wrap, sx, sy, horiz, base, cur }
@@ -1876,18 +1881,51 @@ let openSwipeRow = null;
 let planMenuAnchor = null; // 複製メニューを開いている対象カード要素
 let planMenuIssueId = null;
 
-/* pointermoveのたびに直接window.scrollByしていると、タッチのサンプリング
-   レートが画面のリフレッシュレートより高い端末で1フレーム内に何度も
-   scrollByが走り、微小なノイズがそのまま反映されて画面が激しく上下に
-   振動する不具合があった。今日タブのtlApplyScrollFallbackと同じく、
-   最新の指位置だけを保持しrequestAnimationFrameで1フレームに1回だけ
-   まとめて反映するようにする */
+/* フォールバック開始時の基準点からのオフセットを、上下端を超えないようクランプする
+   (今日タブのtlClampScrollOffsetと同じ) */
+function planClampScrollOffset(offset) {
+  const minOffset = planScrollStartScrollY - planScrollMaxY;
+  const maxOffset = planScrollStartScrollY;
+  return Math.max(minOffset, Math.min(maxOffset, offset));
+}
+
+/* 指の最新位置に合わせて.wrap全体をtransformで見た目だけ動かす(今日タブの
+   tlApplyScrollFallbackと同じ)。window.scrollToを指が動くたびに呼ぶと、
+   iOS側のタッチ追跡処理と競合して描画が追いつかず画面が振動して見える
+   ことがあるため、指が触れている間はGPU合成だけで完結するtransformで
+   見た目を追従させ、実際のスクロール位置は指を離した瞬間に一度だけ
+   確定させる(planFinalizeScrollFallback)。課題タブには今日タブの
+   #timeline-headのようなsticky要素が無いため、打ち消し用の逆transformは
+   不要(.wrap自体の移動がそのまま正しい見た目になる) */
 function planApplyScrollFallback() {
   planScrollRAF = null;
   if (!planScrollFallback || planScrollPendingY === null) return;
-  const dy = planScrollPendingY - planScrollLastY;
-  planScrollLastY = planScrollPendingY;
-  window.scrollBy(0, -dy);
+  const wrap = document.querySelector(".wrap");
+  if (!wrap) return;
+  const offset = planClampScrollOffset(planScrollPendingY - planScrollStartY);
+  wrap.style.transform = `translateY(${offset}px)`;
+}
+
+/* スワイプを終え、transformで見せていた位置を実際のスクロール位置として
+   一度だけ確定する(今日タブのtlFinalizeScrollFallbackと同じ) */
+function planFinalizeScrollFallback() {
+  planScrollFallback = false;
+  const wrap = document.querySelector(".wrap");
+  if (wrap) {
+    if (planScrollPendingY !== null) {
+      /* 確定時だけは、キャッシュ済みのplanScrollMaxY(ジェスチャー開始時点の値)
+         ではなく今の実際の最大スクロール量で上限を取り直す */
+      const freshMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const minOffset = planScrollStartScrollY - freshMaxY;
+      const maxOffset = planScrollStartScrollY;
+      const rawOffset = planScrollPendingY - planScrollStartY;
+      const finalOffset = Math.max(minOffset, Math.min(maxOffset, rawOffset));
+      window.scrollTo(0, planScrollStartScrollY - finalOffset);
+    }
+    wrap.style.transform = "";
+  }
+  planScrollPendingY = null;
+  if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
 }
 
 function closeOpenSwipe() {
@@ -2087,8 +2125,13 @@ document.addEventListener("pointermove", (e) => {
            .swipe-targetはtouch-action:noneのためブラウザは代わりにスクロール
            してくれない。指の動きぶんをこちらで手動スクロールする */
         planScrollFallback = true;
-        planScrollLastY = e.clientY;
+        planScrollStartY = e.clientY;
+        planScrollStartScrollY = window.scrollY;
+        planScrollMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
         planScrollPendingY = null;
+        /* マウスでのスワイプ操作はブラウザ側で移動量に関わらずclickが
+           発火してしまい、開閉トグルなどが誤爆するため抑制する(今日タブと同じ) */
+        suppressClick = true;
       }
       planPending = null;
     }
@@ -2125,9 +2168,10 @@ document.addEventListener("pointermove", (e) => {
 function planPointerEnd() {
   clearTimeout(planLongPressTimer);
   planPending = null;
-  planScrollFallback = false;
-  planScrollPendingY = null;
-  if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
+  if (planScrollFallback) {
+    planFinalizeScrollFallback();
+    setTimeout(() => { suppressClick = false; }, 80);
+  }
 
   if (swipe) {
     const s = swipe;
