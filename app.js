@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v135"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v136"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -230,6 +230,17 @@ function nextTodayAsg() {
     /* 同じ開始時刻が複数ある場合は一番上(先に描画される方)を対象にする */
     const latest = hmToMin(started[started.length - 1].start);
     return started.find((a) => hmToMin(a.start) === latest);
+  }
+  /* 今日の最初のタスクの開始時刻になるまで(=today内でstartedが1件もない)は、
+     前日がまだ締められておらず未完了のタスクが残っていれば、それを引き続き
+     「次にやること」として表示する。前日の開始時刻が今日の最初のタスクと
+     重なる(=今日の最初のタスクの開始時刻を過ぎた)時点でこの分岐には
+     入らなくなり、自然に今日のタスクが優先される。前日の中では一番遅い
+     開始時刻のものを対象にする(今日のstartedと同じ考え方) */
+  const yesterday = addDays(todayKey(), -1);
+  if (!isClosed(yesterday)) {
+    const yIncomplete = dayList(yesterday).filter((a) => a.status !== "done");
+    if (yIncomplete.length) return yIncomplete[yIncomplete.length - 1];
   }
   return list.find((a) => a.status !== "done") || null;
 }
@@ -1858,10 +1869,26 @@ let planAutoScrollSpeed = 0;
 let planAutoScrollRAF = null;
 let planScrollFallback = false; // 手動スクロール代行中か(不具合A対策)
 let planScrollLastY = 0;
+let planScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
+let planScrollRAF = null;
 let swipe = null; // 横スワイプ確定後 { row, wrap, sx, sy, horiz, base, cur }
 let openSwipeRow = null;
 let planMenuAnchor = null; // 複製メニューを開いている対象カード要素
 let planMenuIssueId = null;
+
+/* pointermoveのたびに直接window.scrollByしていると、タッチのサンプリング
+   レートが画面のリフレッシュレートより高い端末で1フレーム内に何度も
+   scrollByが走り、微小なノイズがそのまま反映されて画面が激しく上下に
+   振動する不具合があった。今日タブのtlApplyScrollFallbackと同じく、
+   最新の指位置だけを保持しrequestAnimationFrameで1フレームに1回だけ
+   まとめて反映するようにする */
+function planApplyScrollFallback() {
+  planScrollRAF = null;
+  if (!planScrollFallback || planScrollPendingY === null) return;
+  const dy = planScrollPendingY - planScrollLastY;
+  planScrollLastY = planScrollPendingY;
+  window.scrollBy(0, -dy);
+}
 
 function closeOpenSwipe() {
   if (openSwipeRow) {
@@ -2061,6 +2088,7 @@ document.addEventListener("pointermove", (e) => {
            してくれない。指の動きぶんをこちらで手動スクロールする */
         planScrollFallback = true;
         planScrollLastY = e.clientY;
+        planScrollPendingY = null;
       }
       planPending = null;
     }
@@ -2068,9 +2096,8 @@ document.addEventListener("pointermove", (e) => {
   }
   if (planScrollFallback) {
     e.preventDefault();
-    const dy = e.clientY - planScrollLastY;
-    planScrollLastY = e.clientY;
-    window.scrollBy(0, -dy);
+    planScrollPendingY = e.clientY;
+    if (!planScrollRAF) planScrollRAF = requestAnimationFrame(planApplyScrollFallback);
     return;
   }
   if (swipe) {
@@ -2099,6 +2126,8 @@ function planPointerEnd() {
   clearTimeout(planLongPressTimer);
   planPending = null;
   planScrollFallback = false;
+  planScrollPendingY = null;
+  if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
 
   if (swipe) {
     const s = swipe;
@@ -3729,10 +3758,14 @@ document.addEventListener("click", (e) => {
   /* タブ */
   else if (action === "tab") switchView(btn.dataset.tab);
   else if (action === "mini-jump") {
-    viewDate = todayKey();
-    switchView("today");
+    /* ミニタイマーが表示しているのはupdateMiniTimer()と同じ run||nextTodayAsg()。
+       これが今日以外の日付(締めていない前日から持ち越したタスクなど)を
+       指している場合もあるため、常にtodayKey()に固定するのではなく、
+       表示中のタスクの実際の日付に合わせてそちらを表示する */
     const run = runningAsg();
-    const cur = run || currentAsg();
+    const cur = run || nextTodayAsg();
+    viewDate = cur ? cur.date : todayKey();
+    switchView("today");
     const el = cur ? document.querySelector(`.t-item[data-asg="${cur.id}"]`) : null;
     if (el) requestAnimationFrame(() => scrollToTimelineCard(el));
     else window.scrollTo({ top: 0, behavior: "smooth" });
