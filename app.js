@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v137"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v138"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1862,9 +1862,13 @@ document.addEventListener("pointerdown", (e) => {
       transformで見た目だけ動かし、実際のスクロール位置は指を離した瞬間に
       一度だけ確定させる。window.scrollToは指が動いている間ずっと呼ぶと
       レイアウトを伴う重い処理でタッチ追跡と競合し振動して見えるため)。
-      #timeline-headのようなsticky吸着の複雑さが無いぶんシンプルで、
-      慣性(モーメンタム)も付けない。 */
+      #timeline-headのようなsticky吸着の複雑さが無いぶんシンプル。指を
+      離す直前の勢いに応じて、今日タブと同じ方式の慣性(モーメンタム)で
+      そのままスクロールし続ける(planStartMomentum)。 */
 const PLAN_LONGPRESS_MS = 450;
+const PLAN_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールしない(離しただけの動作とみなす)
+const PLAN_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
+const PLAN_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
 let planLongPressTimer = null;
 let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder }
@@ -1876,6 +1880,8 @@ let planScrollStartScrollY = 0; // フォールバック開始時のスクロー
 let planScrollMaxY = 0; // フォールバック開始時点でのスクロール可能な最大値(上下端のクランプ用)
 let planScrollPendingY = null; // まだ画面に反映していない最新の指のY座標
 let planScrollRAF = null;
+let planScrollVelSamples = []; // 慣性スクロール用、直近の指位置サンプル { t, y }
+let planMomentumRAF = null; // 指を離した後の慣性スクロールのrAFハンドル
 let swipe = null; // 横スワイプ確定後 { row, wrap, sx, sy, horiz, base, cur }
 let openSwipeRow = null;
 let planMenuAnchor = null; // 複製メニューを開いている対象カード要素
@@ -1927,6 +1933,48 @@ function planFinalizeScrollFallback() {
   planScrollPendingY = null;
   if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
 }
+
+/* 指を離した瞬間の勢いでそのままスクロールし続ける(慣性スクロール、今日タブの
+   tlStartMomentumと同じ)。慣性中も指を離す前と同じtransformベースの描画
+   (planApplyScrollFallback)を使い続け、止まったところで初めて実際の
+   スクロール位置を一度だけ確定する(planFinalizeScrollFallback) */
+function planStartMomentum(v0) {
+  if (planMomentumRAF) { cancelAnimationFrame(planMomentumRAF); planMomentumRAF = null; }
+  let velocity = Math.max(-PLAN_MOMENTUM_MAX_VELOCITY, Math.min(PLAN_MOMENTUM_MAX_VELOCITY, v0));
+  let lastT = performance.now();
+  function step() {
+    const now = performance.now();
+    const dt = Math.min(50, now - lastT); // タブ切替復帰等での大きなdtを抑える
+    lastT = now;
+    const sign = velocity > 0 ? 1 : -1;
+    let nextVelocity = velocity - sign * PLAN_MOMENTUM_DECEL * dt;
+    if (sign > 0 && nextVelocity < 0) nextVelocity = 0;
+    if (sign < 0 && nextVelocity > 0) nextVelocity = 0;
+    const avgVelocity = (velocity + nextVelocity) / 2;
+    velocity = nextVelocity;
+    planScrollPendingY += avgVelocity * dt; // 指が動き続けているのと同じ扱いにする
+    planApplyScrollFallback();
+    const rawOffset = planScrollPendingY - planScrollStartY;
+    const hitBoundary = planClampScrollOffset(rawOffset) !== rawOffset;
+    if (velocity !== 0 && !hitBoundary) {
+      planMomentumRAF = requestAnimationFrame(step);
+    } else {
+      planMomentumRAF = null;
+      planFinalizeScrollFallback();
+    }
+  }
+  planMomentumRAF = requestAnimationFrame(step);
+}
+
+/* 慣性スクロール中に画面のどこかに触れたら、指で画面を止めたのと同じなので
+   慣性を打ち切り、その時点のスクロール位置を確定する(今日タブと同じ) */
+document.addEventListener("pointerdown", () => {
+  if (planMomentumRAF) {
+    cancelAnimationFrame(planMomentumRAF);
+    planMomentumRAF = null;
+    planFinalizeScrollFallback();
+  }
+});
 
 function closeOpenSwipe() {
   if (openSwipeRow) {
@@ -2089,6 +2137,15 @@ document.addEventListener("pointerdown", (e) => {
   if (openSwipeRow && openSwipeRow !== el) closeOpenSwipe();
   if (!el) return;
   clearTimeout(planLongPressTimer);
+  /* 前のスワイプ/慣性スクロールがまだ終わっていなければ、新しい操作を
+     始める前にスクロール位置を確定させる(指で画面を止めたのと同じ扱い、
+     今日タブと同じ) */
+  if (planScrollFallback) {
+    if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
+    if (planMomentumRAF) { cancelAnimationFrame(planMomentumRAF); planMomentumRAF = null; }
+    planFinalizeScrollFallback();
+  }
+  planScrollVelSamples = [];
   const type = el.dataset.issue !== undefined ? "issue" : "task";
   const id = type === "issue" ? el.dataset.issue : el.dataset.task;
   planPending = {
@@ -2141,6 +2198,12 @@ document.addEventListener("pointermove", (e) => {
     e.preventDefault();
     planScrollPendingY = e.clientY;
     if (!planScrollRAF) planScrollRAF = requestAnimationFrame(planApplyScrollFallback);
+    /* 慣性スクロール用に直近100ms分だけ指位置を記録しておく(指を離した瞬間の
+       速度を、離す直前の一定時間の移動量から推定するため、今日タブと同じ) */
+    const now = performance.now();
+    planScrollVelSamples.push({ t: now, y: e.clientY });
+    const cutoff = now - 100;
+    while (planScrollVelSamples.length > 1 && planScrollVelSamples[0].t < cutoff) planScrollVelSamples.shift();
     return;
   }
   if (swipe) {
@@ -2169,7 +2232,24 @@ function planPointerEnd() {
   clearTimeout(planLongPressTimer);
   planPending = null;
   if (planScrollFallback) {
-    planFinalizeScrollFallback();
+    if (planScrollRAF) { cancelAnimationFrame(planScrollRAF); planScrollRAF = null; }
+    /* 指を離す直前(直近100ms)の移動速度から、そのまま慣性で流すか、
+       ここで確定するかを決める(今日タブと同じ)。planStartMomentum/
+       planFinalizeScrollFallbackのどちらの経路でも最終的に実スクロール
+       位置の確定とtransform解除を行う */
+    let fingerVel = 0;
+    if (planScrollVelSamples.length >= 2) {
+      const first = planScrollVelSamples[0];
+      const last = planScrollVelSamples[planScrollVelSamples.length - 1];
+      const dt = last.t - first.t;
+      if (dt > 0) fingerVel = (last.y - first.y) / dt; // px/ms、指が下向きなら正
+    }
+    planScrollVelSamples = [];
+    if (Math.abs(fingerVel) >= PLAN_MOMENTUM_MIN_VELOCITY) {
+      planStartMomentum(fingerVel);
+    } else {
+      planFinalizeScrollFallback();
+    }
     setTimeout(() => { suppressClick = false; }, 80);
   }
 
