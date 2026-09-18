@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v145"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v146"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2240,15 +2240,32 @@ function updatePlanNestTarget() {
   }
 }
 
+/* 子階層への移動対象(rowTask)が決まっている間、掴んでいるタスク自身の
+   兄弟内でのgapIndex(=othersのどこに挿入されたものとして表示するか)を
+   求める。rowTaskの一番上の祖先(ルート)がothers(掴んだタスクの現在の
+   兄弟グループ)の中に見つかれば、そのルート自身は動かさず、掴んだタスクの
+   元の位置とルートの間にある他の兄弟だけをずらす対象にする。
+   （以前はここを一律originalIndexに戻していたため、例えば兄弟Bを飛び越えて
+   さらに奥の階層(Aの子)へ移動しようとしている間、Bのすき間表示だけ元に
+   戻ってしまい、動いていないa2などと重なって見える不具合があった） */
+function planRootGapIndexForTarget(rowTask) {
+  if (!rowTask) return planDrag.originalIndex;
+  let root = rowTask;
+  while (root && root.parentId) root = taskById(root.parentId);
+  if (!root) return planDrag.originalIndex;
+  const idx = planDrag.others.findIndex((o) => o.el.dataset.task === root.id);
+  if (idx === -1) return planDrag.originalIndex; // 現在の兄弟グループの外(別の課題など)への移動
+  return idx < planDrag.originalIndex ? idx + 1 : idx;
+}
+
 /* 現在の指位置に合わせて掴んでいる要素の見た目とgapIndexを更新する(今日タブのtlUpdateDragVisual相当) */
 function updatePlanDragVisual() {
   const dy = planDrag.curY - planDrag.py;
   planDrag.groupRows.forEach((g) => { g.el.style.transform = `translateY(${dy}px)`; });
   updatePlanNestTarget();
   if (planDrag.nestTargetId) {
-    /* 子階層に入れる対象が決まっている間は、兄弟としての並べ替え表示(隙間)を
-       一旦元に戻しておく(どちらに入るか紛らわしくなるため) */
-    if (planDrag.gapIndex !== planDrag.originalIndex) applyPlanGap(planDrag.originalIndex);
+    const desiredGapIndex = planRootGapIndexForTarget(taskById(planDrag.nestTargetId));
+    if (planDrag.gapIndex !== desiredGapIndex) applyPlanGap(desiredGapIndex);
     return;
   }
   const scrolled = window.scrollY - planDrag.scrollStart;
