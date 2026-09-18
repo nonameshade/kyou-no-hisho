@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v142"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v143"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2035,15 +2035,14 @@ function clearPlanDestShift() {
 
 function applyPlanDestShift(target, mode) {
   const height = planDrag.height;
-  let els;
+  let baseEls;
   if (mode === "into") {
     /* 子階層に入れる場合、ドロップすると一番上の子になるため、既存の
        子タスク(展開されていて見えているものだけ)を全てheightぶん下へ */
-    els = state.tasks
+    baseEls = state.tasks
       .filter((t) => t.parentId === target.id)
       .map((t) => document.querySelector(`.p-row[data-task="${t.id}"]`))
       .filter(Boolean);
-    els.forEach((el) => { el.style.transform = `translateY(${height}px)`; });
   } else {
     /* 兄弟として直前/直後に入る場合、挿入位置より後ろの行を全てheightぶん下へ */
     const groupEls = [...document.querySelectorAll(".p-row[data-task]")].filter((x) => {
@@ -2056,9 +2055,14 @@ function applyPlanDestShift(target, mode) {
     });
     const targetIdx = groupEls.findIndex((x) => x.dataset.task === target.id);
     const insertIdx = mode === "after" ? targetIdx + 1 : targetIdx;
-    groupEls.forEach((el, i) => { el.style.transform = i >= insertIdx ? `translateY(${height}px)` : ""; });
-    els = groupEls;
+    baseEls = groupEls.filter((el, i) => i >= insertIdx);
   }
+  /* 動かす行それぞれについて、展開されていて見えている子孫の行も一緒に動かす。
+     親の行だけ動いて子の行が元の位置に残ると、動いた親が自分の子に
+     重なってしまうため(掴んだ側の一括移動(planSubtreeRows)と同じ考え方) */
+  const els = [];
+  baseEls.forEach((el) => { els.push(...planSubtreeRows(el)); });
+  els.forEach((el) => { el.style.transform = `translateY(${height}px)`; });
   planDrag.destShiftEls = els;
 }
 
@@ -2100,18 +2104,50 @@ function expandRowDuringDrag(row, taskId) {
 function updatePlanNestTarget() {
   if (planDrag.type !== "task") return;
   const under = document.elementFromPoint(planDrag.curX, planDrag.curY);
-  const row = under ? under.closest(".p-row[data-task]") : null;
+  let row = under ? under.closest(".p-row[data-task]") : null;
+  let forcedMode = null;
+
+  if (!row && under) {
+    /* 子タスクが並ぶ範囲の一番下、最後の行より下の余白に来ている場合。
+       ここは元々「対象なし」だったが、それだと展開した親タスクの下に
+       十分な空きスペースが無い限り「親タスクの外に出す」操作(3.3.3)が
+       行えない。この余白にいる間は、見えている一番下の行が属する
+       ルート(一番上の階層)のタスクの直後に移動する対象として扱う。
+       一番下の子タスクにまだ重なっている間はそちらの行自体がヒットする
+       ので、このフォールバックが効くのは完全にそこを通り過ぎてからになる */
+    const card = under.closest(".issue-card[data-issue]");
+    const container = card ? card.querySelector(".issue-tasks") : under.closest("#task-tree");
+    if (container) {
+      const rows = container.querySelectorAll(".p-row[data-task]");
+      const lastRow = rows[rows.length - 1];
+      if (lastRow && planDrag.curY > lastRow.getBoundingClientRect().bottom) {
+        let rootTask = taskById(lastRow.dataset.task);
+        while (rootTask && rootTask.parentId) rootTask = taskById(rootTask.parentId);
+        if (rootTask) {
+          row = document.querySelector(`.p-row[data-task="${rootTask.id}"]`);
+          forcedMode = "after";
+        }
+      }
+    }
+  }
+
   const rowId = row ? row.dataset.task : null;
   if (!row || planDrag.excludedIds.has(rowId)) {
     clearPlanNestTarget();
     return;
   }
-  const r = row.getBoundingClientRect();
-  const zoneTop = r.top + r.height * 0.25;
-  const zoneBottom = r.top + r.height * 0.75;
-  let mode = "into";
-  if (planDrag.curY < zoneTop) mode = "before";
-  else if (planDrag.curY > zoneBottom) mode = "after";
+
+  let mode;
+  if (forcedMode) {
+    mode = forcedMode;
+  } else {
+    const r = row.getBoundingClientRect();
+    const zoneTop = r.top + r.height * 0.25;
+    const zoneBottom = r.top + r.height * 0.75;
+    mode = "into";
+    if (planDrag.curY < zoneTop) mode = "before";
+    else if (planDrag.curY > zoneBottom) mode = "after";
+  }
 
   const rowTask = taskById(rowId);
   if (mode !== "into") {
