@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v144"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v145"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1877,6 +1877,7 @@ const PLAN_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロール�
 const PLAN_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const PLAN_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
 const PLAN_NEST_EXPAND_MS = 1000; // 折りたたまれたカードの上でこの時間ホバーし続けたら自動展開する
+const PLAN_NEST_HYSTERESIS_MS = 150; // 移動先の切り替えの最短間隔(CSSトランジション中の行にヒットして短時間に判定が入れ替わり続け、見た目が振動するのを防ぐ)
 let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
 let planLongPressTimer = null;
 let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder, origMarginLeft, excludedIds, nestTargetId }
@@ -2156,74 +2157,84 @@ function updatePlanNestTarget() {
     }
   }
 
-  if (!row || planDrag.excludedIds.has(row.dataset.task)) {
-    clearPlanNestTarget();
-    return;
-  }
+  /* 対象・ゾーンを判定する。この時点ではまだ何も変更・確定しない
+     (desiredがnullなら対象なし)。実際の反映はヒステリシス判定の後で行う */
+  let desired = null;
+  if (row && !planDrag.excludedIds.has(row.dataset.task)) {
+    let mode;
+    if (forcedMode) {
+      mode = forcedMode;
+    } else {
+      const r = row.getBoundingClientRect();
+      const zoneTop = r.top + r.height * 0.25;
+      const zoneBottom = r.top + r.height * 0.75;
+      mode = "into";
+      if (planDrag.curY < zoneTop) mode = "before";
+      else if (planDrag.curY > zoneBottom) mode = "after";
 
-  let mode;
-  if (forcedMode) {
-    mode = forcedMode;
-  } else {
-    const r = row.getBoundingClientRect();
-    const zoneTop = r.top + r.height * 0.25;
-    const zoneBottom = r.top + r.height * 0.75;
-    mode = "into";
-    if (planDrag.curY < zoneTop) mode = "before";
-    else if (planDrag.curY > zoneBottom) mode = "after";
-
-    if (mode === "after") {
-      /* 下端ゾーンのうち、行の下端に近い側(深く重なっている側)に来ている
-         場合は、その行だけでなく祖先方向にも「外に出す」対象を広げる。
-         対象の行が自分の階層で一番最後の場合に限り、親タスクを新しい候補にし、
-         その親もさらに一番最後なら…と、一番最後で無くなるところまで辿る。
-         これにより、一番下の子タスクの行に浅く重なっている間は「その階層の
-         中で一番最後」、深く重なる(行の下端に近づく)につれて「親タスクの外」
-         に切り替わる、という自然な感覚になる */
-      const deepFrac = (planDrag.curY - zoneBottom) / Math.max(1, r.bottom - zoneBottom);
-      if (deepFrac > 0.5) {
-        const cand = planWalkUpWhileLast(taskById(row.dataset.task));
-        if (cand && cand.id !== row.dataset.task) {
-          const candRow = document.querySelector(`.p-row[data-task="${cand.id}"]`);
-          if (candRow) row = candRow;
+      if (mode === "after") {
+        /* 下端ゾーンのうち、行の下端に近い側(深く重なっている側)に来ている
+           場合は、その行だけでなく祖先方向にも「外に出す」対象を広げる。
+           対象の行が自分の階層で一番最後の場合に限り、親タスクを新しい候補にし、
+           その親もさらに一番最後なら…と、一番最後で無くなるところまで辿る。
+           これにより、一番下の子タスクの行に浅く重なっている間は「その階層の
+           中で一番最後」、深く重なる(行の下端に近づく)につれて「親タスクの外」
+           に切り替わる、という自然な感覚になる */
+        const deepFrac = (planDrag.curY - zoneBottom) / Math.max(1, r.bottom - zoneBottom);
+        if (deepFrac > 0.5) {
+          const cand = planWalkUpWhileLast(taskById(row.dataset.task));
+          if (cand && cand.id !== row.dataset.task) {
+            const candRow = document.querySelector(`.p-row[data-task="${cand.id}"]`);
+            if (candRow) row = candRow;
+          }
         }
+      }
+    }
+
+    const rowId = row.dataset.task;
+    if (!planDrag.excludedIds.has(rowId)) {
+      const rowTask = taskById(rowId);
+      if (rowTask) {
+        let ok = true;
+        if (mode !== "into") {
+          const draggedTask = taskById(planDrag.id);
+          const isCurrentSibling =
+            draggedTask &&
+            (rowTask.parentId || null) === (draggedTask.parentId || null) &&
+            (!!draggedTask.parentId || (rowTask.issueId || null) === (draggedTask.issueId || null));
+          if (isCurrentSibling) ok = false;
+        }
+        if (ok) desired = { rowId, mode, row, rowTask };
       }
     }
   }
 
-  const rowId = row.dataset.task;
-  if (planDrag.excludedIds.has(rowId)) {
-    clearPlanNestTarget();
-    return;
-  }
-  const rowTask = taskById(rowId);
-  if (!rowTask) {
-    clearPlanNestTarget();
-    return;
-  }
-  if (mode !== "into") {
-    const draggedTask = taskById(planDrag.id);
-    const isCurrentSibling =
-      draggedTask &&
-      (rowTask.parentId || null) === (draggedTask.parentId || null) &&
-      (!!draggedTask.parentId || (rowTask.issueId || null) === (draggedTask.issueId || null));
-    if (isCurrentSibling) {
-      clearPlanNestTarget();
-      return;
-    }
-  }
+  if (!desired && !planDrag.nestTargetId) return; // 元々対象なし、変化なし
+  if (desired && planDrag.nestTargetId === desired.rowId && planDrag.nestMode === desired.mode) return; // 既に同じ対象、何もしない
 
-  if (planDrag.nestTargetId === rowId && planDrag.nestMode === mode) return; // 既に同じ対象、何もしない(タイマーを再スタートさせない)
+  /* ヒステリシス: 対象が既にある状態からの切り替えは、直前の切り替えから
+     一定時間(PLAN_NEST_HYSTERESIS_MS)が経つまで保留する。elementFromPointの
+     判定対象がすき間アニメーション(CSSトランジション)の途中の行にヒットすると、
+     行が動いている最中に何度も判定が入れ替わり、見た目が振動する不具合が
+     あったため(初回の対象取得や、完全な対象なしへの遷移は遅延させない) */
+  const now = performance.now();
+  if (planDrag.nestTargetId !== null && now - planDrag.nestChangedAt < PLAN_NEST_HYSTERESIS_MS) return;
+  planDrag.nestChangedAt = now;
+
   clearPlanNestTarget();
-  planDrag.nestTargetId = rowId;
-  planDrag.nestMode = mode;
-  row.classList.add(mode === "into" ? "plan-nest-target" : `plan-reparent-${mode}`);
-  applyPlanDestShift(rowTask, mode);
-  if (mode === "into") {
-    const hasChildren = state.tasks.some((t) => t.parentId === rowId);
-    if (hasChildren && collapsedIds.has(rowId)) {
+  if (!desired) return;
+
+  planDrag.nestTargetId = desired.rowId;
+  planDrag.nestMode = desired.mode;
+  desired.row.classList.add(desired.mode === "into" ? "plan-nest-target" : `plan-reparent-${desired.mode}`);
+  applyPlanDestShift(desired.rowTask, desired.mode);
+  if (desired.mode === "into") {
+    const hasChildren = state.tasks.some((t) => t.parentId === desired.rowId);
+    if (hasChildren && collapsedIds.has(desired.rowId)) {
+      const targetRow = desired.row;
+      const targetId = desired.rowId;
       planNestExpandTimer = setTimeout(() => {
-        if (planDrag && planDrag.nestTargetId === rowId && planDrag.nestMode === "into") expandRowDuringDrag(row, rowId);
+        if (planDrag && planDrag.nestTargetId === targetId && planDrag.nestMode === "into") expandRowDuringDrag(targetRow, targetId);
       }, PLAN_NEST_EXPAND_MS);
     }
   }
@@ -2410,6 +2421,7 @@ function planStartDrag(p) {
     gapIndex: originalIndex,
     nestTargetId: null,
     nestMode: null,
+    nestChangedAt: 0,
     destShiftEls: null,
     startX: p.px, startY: p.py,
     py: p.py, curX: p.px, curY: p.py,
