@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v141"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v142"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2047,7 +2047,7 @@ function applyPlanDestShift(target, mode) {
   } else {
     /* 兄弟として直前/直後に入る場合、挿入位置より後ろの行を全てheightぶん下へ */
     const groupEls = [...document.querySelectorAll(".p-row[data-task]")].filter((x) => {
-      if (x === planDrag.el) return false;
+      if (planDrag.groupRows.some((g) => g.el === x)) return false;
       const t = taskById(x.dataset.task);
       if (!t) return false;
       if ((t.parentId || null) !== (target.parentId || null)) return false;
@@ -2144,7 +2144,8 @@ function updatePlanNestTarget() {
 
 /* 現在の指位置に合わせて掴んでいる要素の見た目とgapIndexを更新する(今日タブのtlUpdateDragVisual相当) */
 function updatePlanDragVisual() {
-  planDrag.el.style.transform = `translateY(${planDrag.curY - planDrag.py}px)`;
+  const dy = planDrag.curY - planDrag.py;
+  planDrag.groupRows.forEach((g) => { g.el.style.transform = `translateY(${dy}px)`; });
   updatePlanNestTarget();
   if (planDrag.nestTargetId) {
     /* 子階層に入れる対象が決まっている間は、兄弟としての並べ替え表示(隙間)を
@@ -2221,8 +2222,31 @@ document.addEventListener("pointerdown", (e) => {
   hidePlanMenu();
 });
 
+/* 展開されたカードを掴んだとき、直後に続く子孫の行(表示されている範囲)も
+   一緒に掴む対象にする。renderTaskTreeは階層の深さをmargin-leftに直接
+   エンコードしているので、DOM上で連続する.swipe-wrapを、行のmargin-leftが
+   自分より深い間だけ辿ればよい(折りたたまれている子孫はそもそもDOMに
+   存在しないので、そこで辿るのが自然に止まる) */
+function planSubtreeRows(el) {
+  const depth = Math.round((parseFloat(el.style.marginLeft) || 0) / 18);
+  const rows = [el];
+  const wrap0 = el.closest(".swipe-wrap");
+  let sib = wrap0 ? wrap0.nextElementSibling : null;
+  while (sib && sib.classList.contains("swipe-wrap")) {
+    const row = sib.querySelector(".p-row[data-task]");
+    if (!row) break;
+    const d = Math.round((parseFloat(row.style.marginLeft) || 0) / 18);
+    if (d <= depth) break;
+    rows.push(row);
+    sib = sib.nextElementSibling;
+  }
+  return rows;
+}
+
 /* 長押し確定:今日タブのtlStartDrag相当。要素をposition:fixedにして指に追従させ、
-   元の位置には高さ保持用のプレースホルダーを置く */
+   元の位置には高さ保持用のプレースホルダーを置く。タスクを展開した状態で
+   掴んだ場合は、子孫の行(planSubtreeRows)も一緒にposition:fixedにして同じ
+   transformで動かし、見た目上ひとかたまりで掴めるようにする */
 function planStartDrag(p) {
   const { type, id, el } = p;
   let allInclSelf = [...document.querySelectorAll(type === "issue" ? ".issue-card[data-issue]" : ".p-row[data-task]")];
@@ -2240,9 +2264,7 @@ function planStartDrag(p) {
   allInclSelf.forEach((x) => { x.style.transition = "none"; x.style.transform = ""; });
   void el.parentNode.offsetHeight; // 直前のtransition/transform解除を確実に反映させてから測定する
 
-  const rect = el.getBoundingClientRect();
-  const style = getComputedStyle(el);
-  const height = rect.height + (parseFloat(style.marginBottom) || 0);
+  const groupRowEls = type === "task" ? planSubtreeRows(el) : [el];
   const originalIndex = allInclSelf.indexOf(el);
   const others = allInclSelf
     .filter((x) => x !== el)
@@ -2251,25 +2273,45 @@ function planStartDrag(p) {
       return { el: x, midY: r.top + r.height / 2 };
     });
 
-  const placeholder = document.createElement("div");
-  placeholder.className = "plan-drag-placeholder";
-  placeholder.style.height = `${height}px`;
-  el.parentNode.insertBefore(placeholder, el);
+  /* 掴んだ行(＋一緒に掴んだ子孫の行)それぞれについて、個別に高さ保持用の
+     プレースホルダーを置いたうえでposition:fixed化する。gap系のアニメーション
+     (applyPlanGap/applyPlanDestShift)で使うheightは、ひとかたまり全体の
+     合計の高さにする(移動先で空けるべきすき間は行1つぶんではないため) */
+  let height = 0;
+  const groupRows = groupRowEls.map((rowEl) => {
+    const rect = rowEl.getBoundingClientRect();
+    const style = getComputedStyle(rowEl);
+    const rowHeight = rect.height + (parseFloat(style.marginBottom) || 0);
+    height += rowHeight;
+    const placeholder = document.createElement("div");
+    placeholder.className = "plan-drag-placeholder";
+    placeholder.style.height = `${rowHeight}px`;
+    rowEl.parentNode.insertBefore(placeholder, rowEl);
 
-  /* タスク行(.p-row)は階層の深さぶんmargin-leftをインラインstyleで持っている
-     (renderTaskTreeのテンプレート参照)。position:fixed化にあたって一旦0に
-     するが、margin(ショートハンド)でまとめて0にしてしまうと、元の値は
-     CSSOM上から失われ、後で""に戻しても復元されない(margin-leftが
-     消えたまま=親タスク相当のインデントに見える不具合があった)。
-     必ず元の値を控えておき、掴むのをやめる時に明示的に書き戻す */
-  const origMarginLeft = el.style.marginLeft;
+    /* タスク行(.p-row)は階層の深さぶんmargin-leftをインラインstyleで持っている
+       (renderTaskTreeのテンプレート参照)。position:fixed化にあたって一旦0に
+       するが、margin(ショートハンド)でまとめて0にしてしまうと、元の値は
+       CSSOM上から失われ、後で""に戻しても復元されない(margin-leftが
+       消えたまま=親タスク相当のインデントに見える不具合があった)。
+       必ず元の値を控えておき、掴むのをやめる時に明示的に書き戻す */
+    const origMarginLeft = rowEl.style.marginLeft;
+
+    rowEl.style.position = "fixed";
+    rowEl.style.left = `${rect.left}px`;
+    rowEl.style.top = `${rect.top}px`;
+    rowEl.style.width = `${rect.width}px`;
+    rowEl.style.marginLeft = "0";
+    rowEl.style.zIndex = "50";
+    rowEl.classList.add("plan-dragging");
+    return { el: rowEl, origMarginLeft, placeholder };
+  });
 
   /* タスクを他のタスクの子階層に入れる機能(下記updatePlanNestTarget)の対象外:
      自分自身と、自分の配下(子孫)。配下の中に入れようとすると循環参照になるため */
   const excludedIds = type === "task" ? new Set([id, ...descendants(id)]) : new Set();
 
   planDrag = {
-    type, id, el, height, originalIndex, others, origMarginLeft, excludedIds,
+    type, id, el, height, originalIndex, others, excludedIds, groupRows,
     gapIndex: originalIndex,
     nestTargetId: null,
     nestMode: null,
@@ -2277,16 +2319,8 @@ function planStartDrag(p) {
     startX: p.px, startY: p.py,
     py: p.py, curX: p.px, curY: p.py,
     scrollStart: window.scrollY,
-    placeholder,
   };
 
-  el.style.position = "fixed";
-  el.style.left = `${rect.left}px`;
-  el.style.top = `${rect.top}px`;
-  el.style.width = `${rect.width}px`;
-  el.style.marginLeft = "0";
-  el.style.zIndex = "50";
-  el.classList.add("plan-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -2447,18 +2481,22 @@ function planPointerEnd() {
     if (targetRow) targetRow.classList.remove("plan-nest-target", "plan-reparent-before", "plan-reparent-after");
   }
   if (d.destShiftEls) d.destShiftEls.forEach((el) => { el.style.transform = ""; });
-  d.el.classList.remove("plan-dragging");
-  d.el.style.position = "";
-  d.el.style.left = "";
-  d.el.style.top = "";
-  d.el.style.width = "";
-  /* margin-leftは""に戻すのではなく、掴む前の値を明示的に書き戻す
-     (planStartDragのコメント参照。""に戻すだけでは元のインデント量は
-     失われたまま復元されない) */
-  d.el.style.marginLeft = d.origMarginLeft || "";
-  d.el.style.zIndex = "";
-  d.el.style.transform = "";
-  if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
+  /* 掴んでいた行(展開されていた場合は一緒に掴んだ子孫の行も含む)を
+     それぞれ元に戻す */
+  d.groupRows.forEach((g) => {
+    g.el.classList.remove("plan-dragging");
+    g.el.style.position = "";
+    g.el.style.left = "";
+    g.el.style.top = "";
+    g.el.style.width = "";
+    /* margin-leftは""に戻すのではなく、掴む前の値を明示的に書き戻す
+       (planStartDragのコメント参照。""に戻すだけでは元のインデント量は
+       失われたまま復元されない) */
+    g.el.style.marginLeft = g.origMarginLeft || "";
+    g.el.style.zIndex = "";
+    g.el.style.transform = "";
+    if (g.placeholder && g.placeholder.parentNode) g.placeholder.remove();
+  });
   d.others.forEach((o) => { o.el.style.transform = ""; });
 
   /* 長押し確定後、指をほぼ動かさずに離した場合(=8px未満)は「並べ替えドラッグ
