@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v138"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v139"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1852,6 +1852,13 @@ document.addEventListener("pointerdown", (e) => {
       複製メニューを表示する(タスク行は何もしない)。
    3. 長押し確定後にドラッグ: 今日タブのtlApplyGap方式(他のカードを
       translateYでリアルタイムに動かして隙間を見せる)で並べ替える。
+      タスクの場合、他のタスク行の中央付近(上下25%を除いた範囲)に乗せると
+      「その行の子階層の一番上に入れる」対象として代わりにハイライトし
+      (updatePlanNestTarget)、兄弟内の並べ替え表示は一旦止める。折りたたみ
+      済みの行の上で1秒ほど停止するとその場で展開し(expandRowDuringDrag、
+      renderPlan()は呼ばず対象行の直後に子タスクのHTMLだけ差し込む。
+      ドラッグ中の要素はposition:fixedで浮いているため全体を作り直すと
+      壊れるため)、展開された子タスクも同様にドロップ対象にできる。
    4. 450ms未満に8px以上・横方向優勢に動いた場合: 横スワイプ(アーカイブ
       ボタン表示)に移行する。アーカイブスワイプが可能な行(.swipeable内)
       に限る。
@@ -1869,11 +1876,13 @@ const PLAN_LONGPRESS_MS = 450;
 const PLAN_MOMENTUM_MIN_VELOCITY = 0.05; // px/ms未満は慣性スクロールしない(離しただけの動作とみなす)
 const PLAN_MOMENTUM_MAX_VELOCITY = 3.5; // px/ms、指の急な動きの外れ値を抑える上限
 const PLAN_MOMENTUM_DECEL = 0.0015; // px/ms^2、慣性の減速度合い
+const PLAN_NEST_EXPAND_MS = 1000; // 折りたたまれたカードの上でこの時間ホバーし続けたら自動展開する
 let planPending = null; // 判定待ち { type, id, el, px, py, swipeable, swipeBase }
 let planLongPressTimer = null;
-let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder }
+let planDrag = null; // 並べ替えドラッグ確定後 { type, id, el, height, originalIndex, others, gapIndex, startX, startY, py, curX, curY, scrollStart, placeholder, origMarginLeft, excludedIds, nestTargetId }
 let planAutoScrollSpeed = 0;
 let planAutoScrollRAF = null;
+let planNestExpandTimer = null; // タスクの子階層へのドラッグ中、折りたたみカードの自動展開待ちタイマー
 let planScrollFallback = false; // 手動スクロール代行中か(不具合A対策)
 let planScrollStartY = 0; // フォールバック開始時の指のY座標(基準点)
 let planScrollStartScrollY = 0; // フォールバック開始時のスクロール位置(基準点)
@@ -1999,9 +2008,79 @@ function applyPlanGap(gapIndex) {
   planDrag.gapIndex = gapIndex;
 }
 
+/* 子階層へのドロップ対象のハイライトを消し、自動展開タイマーも止める */
+function clearPlanNestTarget() {
+  clearTimeout(planNestExpandTimer);
+  planNestExpandTimer = null;
+  if (planDrag && planDrag.nestTargetId) {
+    const prev = document.querySelector(`.p-row[data-task="${planDrag.nestTargetId}"]`);
+    if (prev) prev.classList.remove("plan-nest-target");
+    planDrag.nestTargetId = null;
+  }
+}
+
+/* 折りたたまれたカードの上に1秒ほど乗せ続けたら展開し、その子階層も
+   ドロップ対象に加えられるようにする。renderPlan()を呼ぶとドラッグ中の
+   要素(position:fixedで抜き出している)ごと作り直されてしまうため、
+   対象行の直後にその子タスク一覧だけを差し込む形で済ませる */
+function expandRowDuringDrag(row, taskId) {
+  if (!collapsedIds.has(taskId)) return;
+  collapsedIds.delete(taskId);
+  saveCollapsed();
+  const caretBtn = row.querySelector(".caret");
+  if (caretBtn) caretBtn.textContent = "▾";
+  const children = state.tasks.filter((t) => t.parentId === taskId);
+  if (children.length) {
+    /* 挿入する子タスク一覧のインデントを、この行自体の深さ+1に合わせる
+       (renderTaskTreeは何も指定しなければ深さ0から描画するため、
+       ツリーの途中に差し込む場合はbaseDepthで揃える必要がある) */
+    const parentDepth = Math.round((parseFloat(row.style.marginLeft) || 0) / 18);
+    row.insertAdjacentHTML("afterend", renderTaskTree(children, null, parentDepth + 1));
+  }
+}
+
+/* タスクをドラッグ中、今どのカードの「子階層に入れる」ゾーン(カード中央
+   付近)に指が乗っているかを判定する。要素の実座標をライブで拾うため
+   document.elementFromPointを使う(自前でrectをキャッシュすると、
+   スクロールや他の行のtranslateYで簡単にずれるため) */
+function updatePlanNestTarget() {
+  if (planDrag.type !== "task") return;
+  const under = document.elementFromPoint(planDrag.curX, planDrag.curY);
+  const row = under ? under.closest(".p-row[data-task]") : null;
+  const rowId = row ? row.dataset.task : null;
+  if (!row || planDrag.excludedIds.has(rowId)) {
+    clearPlanNestTarget();
+    return;
+  }
+  const r = row.getBoundingClientRect();
+  const zoneTop = r.top + r.height * 0.25;
+  const zoneBottom = r.top + r.height * 0.75;
+  if (planDrag.curY < zoneTop || planDrag.curY > zoneBottom) {
+    clearPlanNestTarget();
+    return;
+  }
+  if (planDrag.nestTargetId === rowId) return; // 既に同じ対象、何もしない(タイマーを再スタートさせない)
+  clearPlanNestTarget();
+  planDrag.nestTargetId = rowId;
+  row.classList.add("plan-nest-target");
+  const hasChildren = state.tasks.some((t) => t.parentId === rowId);
+  if (hasChildren && collapsedIds.has(rowId)) {
+    planNestExpandTimer = setTimeout(() => {
+      if (planDrag && planDrag.nestTargetId === rowId) expandRowDuringDrag(row, rowId);
+    }, PLAN_NEST_EXPAND_MS);
+  }
+}
+
 /* 現在の指位置に合わせて掴んでいる要素の見た目とgapIndexを更新する(今日タブのtlUpdateDragVisual相当) */
 function updatePlanDragVisual() {
   planDrag.el.style.transform = `translateY(${planDrag.curY - planDrag.py}px)`;
+  updatePlanNestTarget();
+  if (planDrag.nestTargetId) {
+    /* 子階層に入れる対象が決まっている間は、兄弟としての並べ替え表示(隙間)を
+       一旦元に戻しておく(どちらに入るか紛らわしくなるため) */
+    if (planDrag.gapIndex !== planDrag.originalIndex) applyPlanGap(planDrag.originalIndex);
+    return;
+  }
   const scrolled = window.scrollY - planDrag.scrollStart;
   let idx = 0;
   planDrag.others.forEach((o) => { if (o.midY - scrolled < planDrag.curY) idx++; });
@@ -2106,9 +2185,22 @@ function planStartDrag(p) {
   placeholder.style.height = `${height}px`;
   el.parentNode.insertBefore(placeholder, el);
 
+  /* タスク行(.p-row)は階層の深さぶんmargin-leftをインラインstyleで持っている
+     (renderTaskTreeのテンプレート参照)。position:fixed化にあたって一旦0に
+     するが、margin(ショートハンド)でまとめて0にしてしまうと、元の値は
+     CSSOM上から失われ、後で""に戻しても復元されない(margin-leftが
+     消えたまま=親タスク相当のインデントに見える不具合があった)。
+     必ず元の値を控えておき、掴むのをやめる時に明示的に書き戻す */
+  const origMarginLeft = el.style.marginLeft;
+
+  /* タスクを他のタスクの子階層に入れる機能(下記updatePlanNestTarget)の対象外:
+     自分自身と、自分の配下(子孫)。配下の中に入れようとすると循環参照になるため */
+  const excludedIds = type === "task" ? new Set([id, ...descendants(id)]) : new Set();
+
   planDrag = {
-    type, id, el, height, originalIndex, others,
+    type, id, el, height, originalIndex, others, origMarginLeft, excludedIds,
     gapIndex: originalIndex,
+    nestTargetId: null,
     startX: p.px, startY: p.py,
     py: p.py, curX: p.px, curY: p.py,
     scrollStart: window.scrollY,
@@ -2119,7 +2211,7 @@ function planStartDrag(p) {
   el.style.left = `${rect.left}px`;
   el.style.top = `${rect.top}px`;
   el.style.width = `${rect.width}px`;
-  el.style.margin = "0";
+  el.style.marginLeft = "0";
   el.style.zIndex = "50";
   el.classList.add("plan-dragging");
   try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
@@ -2275,12 +2367,21 @@ function planPointerEnd() {
   const d = planDrag;
   planDrag = null;
   stopPlanAutoScroll();
+  clearTimeout(planNestExpandTimer);
+  planNestExpandTimer = null;
+  if (d.nestTargetId) {
+    const targetRow = document.querySelector(`.p-row[data-task="${d.nestTargetId}"]`);
+    if (targetRow) targetRow.classList.remove("plan-nest-target");
+  }
   d.el.classList.remove("plan-dragging");
   d.el.style.position = "";
   d.el.style.left = "";
   d.el.style.top = "";
   d.el.style.width = "";
-  d.el.style.margin = "";
+  /* margin-leftは""に戻すのではなく、掴む前の値を明示的に書き戻す
+     (planStartDragのコメント参照。""に戻すだけでは元のインデント量は
+     失われたまま復元されない) */
+  d.el.style.marginLeft = d.origMarginLeft || "";
   d.el.style.zIndex = "";
   d.el.style.transform = "";
   if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
@@ -2310,6 +2411,23 @@ function planPointerEnd() {
     state.issues = order.map((id) => issueById(id)).filter(Boolean);
     save();
     renderPlan();
+  } else if (d.nestTargetId) {
+    /* 他のタスクの子階層(一番上)に入れる。関連する課題は入れ先の課題に
+       合わせる(親子関係と所属課題がずれたままにならないように) */
+    const dragged = taskById(d.id);
+    const target = taskById(d.nestTargetId);
+    if (dragged && target) {
+      state.tasks = state.tasks.filter((t) => t.id !== d.id);
+      dragged.parentId = target.id;
+      dragged.issueId = target.issueId || null;
+      const firstChild = state.tasks.find((t) => t.parentId === target.id);
+      const insertAt = firstChild ? state.tasks.indexOf(firstChild) : state.tasks.indexOf(target) + 1;
+      state.tasks.splice(insertAt, 0, dragged);
+      collapsedIds.delete(target.id); // 入れた先を開いた状態にして結果が見えるようにする
+      saveCollapsed();
+      save();
+      renderPlan();
+    }
   } else {
     const dragged = taskById(d.id);
     if (dragged) {
@@ -3032,7 +3150,7 @@ function computeVisibleTasks() {
   return visible;
 }
 
-function renderTaskTree(roots, visible) {
+function renderTaskTree(roots, visible, baseDepth) {
   const searching = !!searchQuery.trim();
   const renderNode = (t, depth) => {
     if (visible && !visible.has(t.id)) return "";
@@ -3074,7 +3192,7 @@ function renderTaskTree(roots, visible) {
       </div>`;
     return row + (isCollapsed ? "" : children.map((c) => renderNode(c, depth + 1)).join(""));
   };
-  return roots.map((t) => renderNode(t, 0)).join("");
+  return roots.map((t) => renderNode(t, baseDepth || 0)).join("");
 }
 
 function renderPlan() {
@@ -3140,12 +3258,15 @@ function renderPlan() {
             ${issueArchived ? "" : `<div class="swipe-action"><button data-action="issue-archive" data-id="${g.id}">📦<br>アーカイブ</button></div>`}
             <div class="issue-card swipe-target" data-issue="${g.id}" style="border-left-color:${c}">
               <div class="issue-top" data-action="issue-open" data-id="${g.id}">
-                <span class="caret">${open ? "▾" : "▸"}</span>
-                <div style="flex:1;min-width:0;">
-                  <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)} <span class="issue-status s-${g.status || "todo"}">${statusLabel}</span></div>
+                <button class="caret" data-action="issue-open" data-id="${g.id}">${open ? "▾" : "▸"}</button>
+                <div class="issue-top-main" data-action="issue-open" data-id="${g.id}">
+                  <div class="issue-title-row">
+                    <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)}</div>
+                    <span class="issue-status s-${g.status || "todo"}">${statusLabel}</span>
+                    ${issueArchived ? `<button class="sbtn" data-action="issue-unarchive" data-id="${g.id}">解除</button>` : dl}
+                  </div>
                   ${!open ? `<div class="issue-purpose">タスク ${cnt}件</div>` : ""}
                 </div>
-                ${issueArchived ? `<button class="sbtn" data-action="issue-unarchive" data-id="${g.id}">解除</button>` : dl}
               </div>
               ${body}
             </div>

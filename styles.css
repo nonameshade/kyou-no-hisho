@@ -762,8 +762,23 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   margin-bottom: 10px;
   border-left: 4px solid transparent;
 }
-.issue-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-.issue-title { font-size: 15.5px; font-weight: 700; }
+.issue-top { display: flex; align-items: flex-start; gap: 6px; }
+/* タイトル行(タイトル+状況タグ+期間タグ)と、その下の付随情報(タスク件数)を
+   別ブロックに分け、開閉ボタンは常にタイトル行の高さだけを基準に
+   flex-start(上端)で揃える。タスク件数の行は折りたたみ時にしか出ないため、
+   これを分けておかないと展開/折りたたみのたびに開閉ボタン・期間タグの
+   縦位置が(align-items:centerだと)ずれて見える不具合があった */
+.issue-top-main { flex: 1; min-width: 0; cursor: pointer; }
+.issue-title-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.issue-title {
+  font-size: 15.5px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .issue-purpose { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 .issue-deadline {
   font-size: 11px;
@@ -771,6 +786,7 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   border-radius: 999px;
   padding: 2px 9px;
   flex-shrink: 0;
+  white-space: nowrap;
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -796,10 +812,10 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   font-weight: 700;
   border-radius: 999px;
   padding: 1px 8px;
-  margin-left: 4px;
   background: var(--bg);
   color: var(--muted);
-  vertical-align: middle;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .issue-status.s-doing { background: var(--accent-soft); color: var(--accent); }
 .issue-status.s-done { background: var(--done); color: #fff; }
@@ -1157,8 +1173,26 @@ input[type="date"], input[type="time"] {
 .drop-hint { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
 
 /* 課題カード内のタスク */
-.issue-top { align-items: center; gap: 6px; cursor: pointer; }
-.issue-top .caret { pointer-events: none; }
+/* align-itemsはここでは指定しない(常にflex-start。上のベース.issue-topの
+   指定のまま、開閉ボタン・期間タグの縦位置が展開/折りたたみで動かないように) */
+.issue-top { gap: 6px; cursor: pointer; }
+/* 課題カードの開閉ボタン。以前はpointer-events:noneの<span>で、.issue-top
+   全体のタップに任せていたが、押した反応が悪いという指摘を受けて独立した
+   <button>にし、見た目のサイズを2倍(22px→44px)にしたうえで、さらに
+   marginを負値にしてレイアウト上の専有幅は44pxのまま当たり判定だけを
+   一回り広げている(ボタンサイズに余裕を持たせた範囲が反応するように) */
+.issue-top .caret {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  margin: -6px;
+  padding: 6px;
+}
 .issue-tasks { margin-top: 10px; }
 .issue-tasks .p-row { background: #F7F9FA; }
 .issue-foot { gap: 8px; justify-content: flex-start; }
@@ -1258,8 +1292,19 @@ input[type="date"], input[type="time"] {
   transition: none;
   z-index: 50;
   box-shadow: 0 10px 26px rgba(23,33,43,.28);
+  /* document.elementFromPoint()で子階層への入れ先を判定する際、指のすぐ下に
+     いる自分自身(掴んでいるカード)がヒットしてしまわないようにする。
+     ドラッグ中は自身のボタン等を個別に操作することも無いため無効化してよい */
+  pointer-events: none;
 }
 .plan-drag-placeholder { margin: 0; }
+/* タスクをドラッグ中、カード中央付近に乗せて「子階層に入れる」対象に
+   なっている行のハイライト */
+.plan-nest-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
 
 /* ---------- フェーズ9:日付ナビ・締め・パンくず・追随ドラッグ ---------- */
 #name-tip { position: absolute; }
