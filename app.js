@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v140"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v141"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2018,6 +2018,48 @@ function clearPlanNestTarget() {
     planDrag.nestTargetId = null;
     planDrag.nestMode = null;
   }
+  clearPlanDestShift();
+}
+
+/* 移動先まわりのカードを、ドラッグ中のカードの高さぶんだけ動かして
+   すき間を空ける(兄弟内並べ替えのapplyPlanGapと同じ考え方を、対象が
+   変わるたびに動的に決まる移動先グループに適用する)。対象が変わったら
+   clearPlanNestTarget()経由で必ずclearPlanDestShift()を呼び、いったん
+   元に戻してから改めて計算し直す */
+function clearPlanDestShift() {
+  if (planDrag && planDrag.destShiftEls) {
+    planDrag.destShiftEls.forEach((el) => { el.style.transform = ""; });
+    planDrag.destShiftEls = null;
+  }
+}
+
+function applyPlanDestShift(target, mode) {
+  const height = planDrag.height;
+  let els;
+  if (mode === "into") {
+    /* 子階層に入れる場合、ドロップすると一番上の子になるため、既存の
+       子タスク(展開されていて見えているものだけ)を全てheightぶん下へ */
+    els = state.tasks
+      .filter((t) => t.parentId === target.id)
+      .map((t) => document.querySelector(`.p-row[data-task="${t.id}"]`))
+      .filter(Boolean);
+    els.forEach((el) => { el.style.transform = `translateY(${height}px)`; });
+  } else {
+    /* 兄弟として直前/直後に入る場合、挿入位置より後ろの行を全てheightぶん下へ */
+    const groupEls = [...document.querySelectorAll(".p-row[data-task]")].filter((x) => {
+      if (x === planDrag.el) return false;
+      const t = taskById(x.dataset.task);
+      if (!t) return false;
+      if ((t.parentId || null) !== (target.parentId || null)) return false;
+      if (!target.parentId && (t.issueId || null) !== (target.issueId || null)) return false;
+      return true;
+    });
+    const targetIdx = groupEls.findIndex((x) => x.dataset.task === target.id);
+    const insertIdx = mode === "after" ? targetIdx + 1 : targetIdx;
+    groupEls.forEach((el, i) => { el.style.transform = i >= insertIdx ? `translateY(${height}px)` : ""; });
+    els = groupEls;
+  }
+  planDrag.destShiftEls = els;
 }
 
 /* 折りたたまれたカードの上に1秒ほど乗せ続けたら展開し、その子階層も
@@ -2037,6 +2079,11 @@ function expandRowDuringDrag(row, taskId) {
        ツリーの途中に差し込む場合はbaseDepthで揃える必要がある) */
     const parentDepth = Math.round((parseFloat(row.style.marginLeft) || 0) / 18);
     row.insertAdjacentHTML("afterend", renderTaskTree(children, null, parentDepth + 1));
+    /* 展開して初めて見える化した子タスクにも、すき間を空けるアニメーションを
+       適用し直す(展開前は対象がDOMに無くapplyPlanDestShiftが何もできないため) */
+    if (planDrag && planDrag.nestTargetId === taskId && planDrag.nestMode === "into") {
+      applyPlanDestShift(taskById(taskId), "into");
+    }
   }
 }
 
@@ -2066,8 +2113,8 @@ function updatePlanNestTarget() {
   if (planDrag.curY < zoneTop) mode = "before";
   else if (planDrag.curY > zoneBottom) mode = "after";
 
+  const rowTask = taskById(rowId);
   if (mode !== "into") {
-    const rowTask = taskById(rowId);
     const draggedTask = taskById(planDrag.id);
     const isCurrentSibling =
       rowTask && draggedTask &&
@@ -2084,6 +2131,7 @@ function updatePlanNestTarget() {
   planDrag.nestTargetId = rowId;
   planDrag.nestMode = mode;
   row.classList.add(mode === "into" ? "plan-nest-target" : `plan-reparent-${mode}`);
+  if (rowTask) applyPlanDestShift(rowTask, mode);
   if (mode === "into") {
     const hasChildren = state.tasks.some((t) => t.parentId === rowId);
     if (hasChildren && collapsedIds.has(rowId)) {
@@ -2225,6 +2273,7 @@ function planStartDrag(p) {
     gapIndex: originalIndex,
     nestTargetId: null,
     nestMode: null,
+    destShiftEls: null,
     startX: p.px, startY: p.py,
     py: p.py, curX: p.px, curY: p.py,
     scrollStart: window.scrollY,
@@ -2397,6 +2446,7 @@ function planPointerEnd() {
     const targetRow = document.querySelector(`.p-row[data-task="${d.nestTargetId}"]`);
     if (targetRow) targetRow.classList.remove("plan-nest-target", "plan-reparent-before", "plan-reparent-after");
   }
+  if (d.destShiftEls) d.destShiftEls.forEach((el) => { el.style.transform = ""; });
   d.el.classList.remove("plan-dragging");
   d.el.style.position = "";
   d.el.style.left = "";
