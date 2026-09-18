@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v143"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v144"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1996,14 +1996,17 @@ function closeOpenSwipe() {
   }
 }
 
-/* gapIndexに応じて他のカード/行をずらして隙間を空ける(今日タブのtlApplyGap相当) */
+/* gapIndexに応じて他のカード/行をずらして隙間を空ける(今日タブのtlApplyGap相当)。
+   タスクの場合、展開されて子タスクの行が見えているものは、その子孫の行も
+   一緒にずらす(親の行だけ動いて子が置いてけぼりになると重なってしまうため) */
 function applyPlanGap(gapIndex) {
   const orig = planDrag.originalIndex;
   planDrag.others.forEach((o, i) => {
     let shift = 0;
     if (gapIndex > orig && i >= orig && i < gapIndex) shift = -planDrag.height;
     else if (gapIndex < orig && i >= gapIndex && i < orig) shift = planDrag.height;
-    o.el.style.transform = shift ? `translateY(${shift}px)` : "";
+    const subtree = planDrag.type === "task" ? planSubtreeRows(o.el) : [o.el];
+    subtree.forEach((el) => { el.style.transform = shift ? `translateY(${shift}px)` : ""; });
   });
   planDrag.gapIndex = gapIndex;
 }
@@ -2091,6 +2094,29 @@ function expandRowDuringDrag(row, taskId) {
   }
 }
 
+/* タスクtaskが、自分の階層(同じparentId、ルートなら同じissueId)の中で
+   一番最後(配列の並び順で最後)かどうかを返す */
+function planIsLastSibling(task) {
+  if (!task) return false;
+  const sibs = state.tasks.filter((t) => {
+    if ((t.parentId || null) !== (task.parentId || null)) return false;
+    if (!task.parentId && (t.issueId || null) !== (task.issueId || null)) return false;
+    return true;
+  });
+  return sibs.length > 0 && sibs[sibs.length - 1].id === task.id;
+}
+
+/* taskの祖先を、taskが自分の階層で一番最後である間だけ辿って遡る。
+   一番最後でなくなった(自分より後ろに兄弟がいる)時点のタスクを返す
+   (=そこから先は「その兄弟の直前」で表現できるので、それより上には出ない) */
+function planWalkUpWhileLast(task) {
+  let cur = task;
+  while (cur && cur.parentId && planIsLastSibling(cur)) {
+    cur = taskById(cur.parentId);
+  }
+  return cur;
+}
+
 /* タスクをドラッグ中、今どの行のどのゾーンに指が乗っているかを判定する。
    行の中央付近(50%)は「その行の子階層に入れる」、上下端付近(各25%)は
    「その行と同じ階層の兄弟として、直前/直後に移動する」対象になる。
@@ -2121,8 +2147,7 @@ function updatePlanNestTarget() {
       const rows = container.querySelectorAll(".p-row[data-task]");
       const lastRow = rows[rows.length - 1];
       if (lastRow && planDrag.curY > lastRow.getBoundingClientRect().bottom) {
-        let rootTask = taskById(lastRow.dataset.task);
-        while (rootTask && rootTask.parentId) rootTask = taskById(rootTask.parentId);
+        const rootTask = planWalkUpWhileLast(taskById(lastRow.dataset.task));
         if (rootTask) {
           row = document.querySelector(`.p-row[data-task="${rootTask.id}"]`);
           forcedMode = "after";
@@ -2131,8 +2156,7 @@ function updatePlanNestTarget() {
     }
   }
 
-  const rowId = row ? row.dataset.task : null;
-  if (!row || planDrag.excludedIds.has(rowId)) {
+  if (!row || planDrag.excludedIds.has(row.dataset.task)) {
     clearPlanNestTarget();
     return;
   }
@@ -2147,13 +2171,40 @@ function updatePlanNestTarget() {
     mode = "into";
     if (planDrag.curY < zoneTop) mode = "before";
     else if (planDrag.curY > zoneBottom) mode = "after";
+
+    if (mode === "after") {
+      /* 下端ゾーンのうち、行の下端に近い側(深く重なっている側)に来ている
+         場合は、その行だけでなく祖先方向にも「外に出す」対象を広げる。
+         対象の行が自分の階層で一番最後の場合に限り、親タスクを新しい候補にし、
+         その親もさらに一番最後なら…と、一番最後で無くなるところまで辿る。
+         これにより、一番下の子タスクの行に浅く重なっている間は「その階層の
+         中で一番最後」、深く重なる(行の下端に近づく)につれて「親タスクの外」
+         に切り替わる、という自然な感覚になる */
+      const deepFrac = (planDrag.curY - zoneBottom) / Math.max(1, r.bottom - zoneBottom);
+      if (deepFrac > 0.5) {
+        const cand = planWalkUpWhileLast(taskById(row.dataset.task));
+        if (cand && cand.id !== row.dataset.task) {
+          const candRow = document.querySelector(`.p-row[data-task="${cand.id}"]`);
+          if (candRow) row = candRow;
+        }
+      }
+    }
   }
 
+  const rowId = row.dataset.task;
+  if (planDrag.excludedIds.has(rowId)) {
+    clearPlanNestTarget();
+    return;
+  }
   const rowTask = taskById(rowId);
+  if (!rowTask) {
+    clearPlanNestTarget();
+    return;
+  }
   if (mode !== "into") {
     const draggedTask = taskById(planDrag.id);
     const isCurrentSibling =
-      rowTask && draggedTask &&
+      draggedTask &&
       (rowTask.parentId || null) === (draggedTask.parentId || null) &&
       (!!draggedTask.parentId || (rowTask.issueId || null) === (draggedTask.issueId || null));
     if (isCurrentSibling) {
@@ -2167,7 +2218,7 @@ function updatePlanNestTarget() {
   planDrag.nestTargetId = rowId;
   planDrag.nestMode = mode;
   row.classList.add(mode === "into" ? "plan-nest-target" : `plan-reparent-${mode}`);
-  if (rowTask) applyPlanDestShift(rowTask, mode);
+  applyPlanDestShift(rowTask, mode);
   if (mode === "into") {
     const hasChildren = state.tasks.some((t) => t.parentId === rowId);
     if (hasChildren && collapsedIds.has(rowId)) {
@@ -2302,10 +2353,18 @@ function planStartDrag(p) {
 
   const groupRowEls = type === "task" ? planSubtreeRows(el) : [el];
   const originalIndex = allInclSelf.indexOf(el);
+  /* 兄弟の並べ替え判定に使うmidYは、展開されて子タスクの行が見えている
+     場合、その行自身ではなく一番下の子孫の行を基準にする。そうしないと、
+     兄弟の行自体を少し過ぎただけ(子タスクの一番上あたり)で「その兄弟の後ろ」
+     に切り替わってしまい、「一番下の子タスクに重なっている間は子階層の中の
+     並べ替え、そこを大きく過ぎたら親タスクの外側」という自然な感覚に
+     ならないため */
   const others = allInclSelf
     .filter((x) => x !== el)
     .map((x) => {
-      const r = x.getBoundingClientRect();
+      const subtree = type === "task" ? planSubtreeRows(x) : [x];
+      const last = subtree[subtree.length - 1];
+      const r = last.getBoundingClientRect();
       return { el: x, midY: r.top + r.height / 2 };
     });
 
