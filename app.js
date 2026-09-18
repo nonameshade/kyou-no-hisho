@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v139"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v140"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2008,14 +2008,15 @@ function applyPlanGap(gapIndex) {
   planDrag.gapIndex = gapIndex;
 }
 
-/* 子階層へのドロップ対象のハイライトを消し、自動展開タイマーも止める */
+/* 子階層へのドロップ対象/兄弟階層への移動対象のハイライトを消し、自動展開タイマーも止める */
 function clearPlanNestTarget() {
   clearTimeout(planNestExpandTimer);
   planNestExpandTimer = null;
   if (planDrag && planDrag.nestTargetId) {
     const prev = document.querySelector(`.p-row[data-task="${planDrag.nestTargetId}"]`);
-    if (prev) prev.classList.remove("plan-nest-target");
+    if (prev) prev.classList.remove("plan-nest-target", "plan-reparent-before", "plan-reparent-after");
     planDrag.nestTargetId = null;
+    planDrag.nestMode = null;
   }
 }
 
@@ -2039,10 +2040,16 @@ function expandRowDuringDrag(row, taskId) {
   }
 }
 
-/* タスクをドラッグ中、今どのカードの「子階層に入れる」ゾーン(カード中央
-   付近)に指が乗っているかを判定する。要素の実座標をライブで拾うため
-   document.elementFromPointを使う(自前でrectをキャッシュすると、
-   スクロールや他の行のtranslateYで簡単にずれるため) */
+/* タスクをドラッグ中、今どの行のどのゾーンに指が乗っているかを判定する。
+   行の中央付近(50%)は「その行の子階層に入れる」、上下端付近(各25%)は
+   「その行と同じ階層の兄弟として、直前/直後に移動する」対象になる。
+   後者は、子タスクを親タスクの外(親タスクと同じ階層)に出す操作の手段でもある
+   (親タスク自身の行の上端/下端に乗せればよい)。ただし現在すでに同じ階層の
+   兄弟である行の上下端は、従来どおりの隙間ドラッグ(applyPlanGap)に任せる
+   (滑らかな見た目のまま変更しないため)。
+   要素の実座標をライブで拾うため document.elementFromPoint を使う
+   (自前でrectをキャッシュすると、スクロールや他の行のtranslateYで
+   簡単にずれるため) */
 function updatePlanNestTarget() {
   if (planDrag.type !== "task") return;
   const under = document.elementFromPoint(planDrag.curX, planDrag.curY);
@@ -2055,19 +2062,35 @@ function updatePlanNestTarget() {
   const r = row.getBoundingClientRect();
   const zoneTop = r.top + r.height * 0.25;
   const zoneBottom = r.top + r.height * 0.75;
-  if (planDrag.curY < zoneTop || planDrag.curY > zoneBottom) {
-    clearPlanNestTarget();
-    return;
+  let mode = "into";
+  if (planDrag.curY < zoneTop) mode = "before";
+  else if (planDrag.curY > zoneBottom) mode = "after";
+
+  if (mode !== "into") {
+    const rowTask = taskById(rowId);
+    const draggedTask = taskById(planDrag.id);
+    const isCurrentSibling =
+      rowTask && draggedTask &&
+      (rowTask.parentId || null) === (draggedTask.parentId || null) &&
+      (!!draggedTask.parentId || (rowTask.issueId || null) === (draggedTask.issueId || null));
+    if (isCurrentSibling) {
+      clearPlanNestTarget();
+      return;
+    }
   }
-  if (planDrag.nestTargetId === rowId) return; // 既に同じ対象、何もしない(タイマーを再スタートさせない)
+
+  if (planDrag.nestTargetId === rowId && planDrag.nestMode === mode) return; // 既に同じ対象、何もしない(タイマーを再スタートさせない)
   clearPlanNestTarget();
   planDrag.nestTargetId = rowId;
-  row.classList.add("plan-nest-target");
-  const hasChildren = state.tasks.some((t) => t.parentId === rowId);
-  if (hasChildren && collapsedIds.has(rowId)) {
-    planNestExpandTimer = setTimeout(() => {
-      if (planDrag && planDrag.nestTargetId === rowId) expandRowDuringDrag(row, rowId);
-    }, PLAN_NEST_EXPAND_MS);
+  planDrag.nestMode = mode;
+  row.classList.add(mode === "into" ? "plan-nest-target" : `plan-reparent-${mode}`);
+  if (mode === "into") {
+    const hasChildren = state.tasks.some((t) => t.parentId === rowId);
+    if (hasChildren && collapsedIds.has(rowId)) {
+      planNestExpandTimer = setTimeout(() => {
+        if (planDrag && planDrag.nestTargetId === rowId && planDrag.nestMode === "into") expandRowDuringDrag(row, rowId);
+      }, PLAN_NEST_EXPAND_MS);
+    }
   }
 }
 
@@ -2201,6 +2224,7 @@ function planStartDrag(p) {
     type, id, el, height, originalIndex, others, origMarginLeft, excludedIds,
     gapIndex: originalIndex,
     nestTargetId: null,
+    nestMode: null,
     startX: p.px, startY: p.py,
     py: p.py, curX: p.px, curY: p.py,
     scrollStart: window.scrollY,
@@ -2371,7 +2395,7 @@ function planPointerEnd() {
   planNestExpandTimer = null;
   if (d.nestTargetId) {
     const targetRow = document.querySelector(`.p-row[data-task="${d.nestTargetId}"]`);
-    if (targetRow) targetRow.classList.remove("plan-nest-target");
+    if (targetRow) targetRow.classList.remove("plan-nest-target", "plan-reparent-before", "plan-reparent-after");
   }
   d.el.classList.remove("plan-dragging");
   d.el.style.position = "";
@@ -2412,19 +2436,30 @@ function planPointerEnd() {
     save();
     renderPlan();
   } else if (d.nestTargetId) {
-    /* 他のタスクの子階層(一番上)に入れる。関連する課題は入れ先の課題に
-       合わせる(親子関係と所属課題がずれたままにならないように) */
     const dragged = taskById(d.id);
     const target = taskById(d.nestTargetId);
     if (dragged && target) {
       state.tasks = state.tasks.filter((t) => t.id !== d.id);
-      dragged.parentId = target.id;
-      dragged.issueId = target.issueId || null;
-      const firstChild = state.tasks.find((t) => t.parentId === target.id);
-      const insertAt = firstChild ? state.tasks.indexOf(firstChild) : state.tasks.indexOf(target) + 1;
-      state.tasks.splice(insertAt, 0, dragged);
-      collapsedIds.delete(target.id); // 入れた先を開いた状態にして結果が見えるようにする
-      saveCollapsed();
+      if (d.nestMode === "into") {
+        /* 他のタスクの子階層(一番上)に入れる。関連する課題は入れ先の課題に
+           合わせる(親子関係と所属課題がずれたままにならないように) */
+        dragged.parentId = target.id;
+        dragged.issueId = target.issueId || null;
+        const firstChild = state.tasks.find((t) => t.parentId === target.id);
+        const insertAt = firstChild ? state.tasks.indexOf(firstChild) : state.tasks.indexOf(target) + 1;
+        state.tasks.splice(insertAt, 0, dragged);
+        collapsedIds.delete(target.id); // 入れた先を開いた状態にして結果が見えるようにする
+        saveCollapsed();
+      } else {
+        /* 対象の行と同じ階層(兄弟)になるよう、その直前/直後に移動する。
+           子タスクを親タスクの外(親タスクと同じ階層)に出す操作は、対象に
+           自分の親タスク自身を選ぶことで実現する(親の親を新しい親にする) */
+        dragged.parentId = target.parentId || null;
+        dragged.issueId = target.issueId || null;
+        const idx = state.tasks.indexOf(target);
+        const insertAt = d.nestMode === "before" ? idx : idx + 1;
+        state.tasks.splice(insertAt, 0, dragged);
+      }
       save();
       renderPlan();
     }
@@ -3260,8 +3295,8 @@ function renderPlan() {
               <div class="issue-top" data-action="issue-open" data-id="${g.id}">
                 <button class="caret" data-action="issue-open" data-id="${g.id}">${open ? "▾" : "▸"}</button>
                 <div class="issue-top-main" data-action="issue-open" data-id="${g.id}">
-                  <div class="issue-title-row">
-                    <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)}</div>
+                  <div class="issue-title">${issueArchived ? "📦 " : ""}${esc(g.title)}</div>
+                  <div class="issue-badge-row">
                     <span class="issue-status s-${g.status || "todo"}">${statusLabel}</span>
                     ${issueArchived ? `<button class="sbtn" data-action="issue-unarchive" data-id="${g.id}">解除</button>` : dl}
                   </div>

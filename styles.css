@@ -769,16 +769,14 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
    これを分けておかないと展開/折りたたみのたびに開閉ボタン・期間タグの
    縦位置が(align-items:centerだと)ずれて見える不具合があった */
 .issue-top-main { flex: 1; min-width: 0; cursor: pointer; }
-.issue-title-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .issue-title {
   font-size: 15.5px;
   font-weight: 700;
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.issue-badge-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; margin-top: 4px; }
 .issue-purpose { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 .issue-deadline {
   font-size: 11px;
@@ -1305,6 +1303,11 @@ input[type="date"], input[type="time"] {
   outline-offset: -2px;
   background: var(--accent-soft);
 }
+/* タスクをドラッグ中、他の行の上端/下端付近に乗せて「その行と同じ階層に
+   移動する(兄弟にする)」対象になっているときの挿入位置の目印。
+   子タスクを親タスクの外(親と同じ階層)に出す操作もこれで行う */
+.plan-reparent-before { box-shadow: inset 0 3px 0 0 var(--accent); }
+.plan-reparent-after { box-shadow: inset 0 -3px 0 0 var(--accent); }
 
 /* ---------- フェーズ9:日付ナビ・締め・パンくず・追随ドラッグ ---------- */
 #name-tip { position: absolute; }
