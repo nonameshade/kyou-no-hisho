@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v147"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v148"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1541,94 +1541,131 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
     })
     .join("");
 
+  /* 課題idを指定して、その課題に属するタスクが1件でも表示対象になるかを返す
+     (アーカイブ・選択日・検索の絞り込みは個々のタスク描画と同じ条件)。
+     該当が無ければ課題のサマリー行自体を表示しない(空の見出しを出さないため) */
+  const issueHasVisibleTask = (issueId) =>
+    state.tasks.some((t) => {
+      if ((t.issueId || null) !== issueId) return false;
+      if (!showArch && isTaskArchived(t)) return false;
+      if (selDate !== null && !(selDayVisibleIds && selDayVisibleIds.has(t.id))) return false;
+      if (searchKeywords.length > 0 && !taskMatchesSearch(t, searchKeywords)) return false;
+      return true;
+    });
+
   /* タスク行:左の名前列と右のトラックを同じ順序で組み立てる */
   const sideRows = [];
   const trackRows = [];
-  const walk = (parentId, depth) => {
-    (parentId === null ? orderedRoots() : state.tasks.filter((t) => t.parentId === parentId))
-      .forEach((t) => {
-        const hideThis =
-          (!showArch && isTaskArchived(t)) || // アーカイブのみ非表示(完了でも未アーカイブなら表示)
-          (selDate !== null && !(selDayVisibleIds && selDayVisibleIds.has(t.id))) || // 選択中の日付での絞り込み(スナップショット)
-          (searchKeywords.length > 0 && !taskMatchesSearch(t, searchKeywords)); // タスク名検索(即時反映)
-        if (!hideThis) {
-          const children = state.tasks.filter((c) => c.parentId === t.id);
-          const color = t.issueId ? issueColor(issueById(t.issueId)) : "#0E7C66";
-          const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
+  const renderTaskRow = (t, depth) => {
+    const hideThis =
+      (!showArch && isTaskArchived(t)) || // アーカイブのみ非表示(完了でも未アーカイブなら表示)
+      (selDate !== null && !(selDayVisibleIds && selDayVisibleIds.has(t.id))) || // 選択中の日付での絞り込み(スナップショット)
+      (searchKeywords.length > 0 && !taskMatchesSearch(t, searchKeywords)); // タスク名検索(即時反映)
+    if (!hideThis) {
+      const children = state.tasks.filter((c) => c.parentId === t.id);
+      const color = t.issueId ? issueColor(issueById(t.issueId)) : "#0E7C66";
+      const p = t.type === "recurring" ? { s: null, e: null } : effPeriod(t);
 
-          let bar = "";
-          if (p.s && p.e && p.e >= days[0] && p.s <= days[days.length - 1]) {
-            const s = p.s < days[0] ? days[0] : p.s;
-            const e = p.e > days[days.length - 1] ? days[days.length - 1] : p.e;
-            const left = diffDays(s, days[0]) * G_COLW + 2;
-            const width = (diffDays(e, s) + 1) * G_COLW - 4;
-            bar = `<div class="g-bar ${children.length ? "parent" : ""}" style="left:${left}px;width:${width}px;background:${color}" title="${esc(t.title)} ${p.s}〜${p.e}"></div>`;
+      let bar = "";
+      if (p.s && p.e && p.e >= days[0] && p.s <= days[days.length - 1]) {
+        const s = p.s < days[0] ? days[0] : p.s;
+        const e = p.e > days[days.length - 1] ? days[days.length - 1] : p.e;
+        const left = diffDays(s, days[0]) * G_COLW + 2;
+        const width = (diffDays(e, s) + 1) * G_COLW - 4;
+        bar = `<div class="g-bar ${children.length ? "parent" : ""}" style="left:${left}px;width:${width}px;background:${color}" title="${esc(t.title)} ${p.s}〜${p.e}"></div>`;
+      }
+
+      const ruleRes = ruleReserveDates(t, days[0], days[days.length - 1]);
+
+      const cells = days
+        .map((dk, i) => {
+          const real = state.assignments.find((a) => a.taskId === t.id && a.date === dk);
+          const manualRes = !real && findReserve(t.id, dk);
+          const virt =
+            !real &&
+            t.type === "recurring" &&
+            dk >= tk &&
+            occursOn(t, dk) &&
+            !hasSkip(t.id, dk);
+          const autoRes = !real && !virt && !manualRes && ruleRes.has(dk);
+          let mark = "";
+          let movable = "";
+          if (real) {
+            mark =
+              real.status === "done"
+                ? `<span class="mark done-m">✓</span>`
+                : `<span class="mark todo-m">●</span>`;
+            if (t.type !== "recurring") movable = "has-mark";
+          } else if (manualRes) {
+            mark = `<span class="mark res-m">○</span>`;
+            movable = "has-mark";
+          } else if (virt) {
+            mark = `<span class="mark virt-m">🔁</span>`;
+          } else if (autoRes) {
+            mark = `<span class="mark ares-m">○</span>`;
           }
+          if (t.type === "summary" || isClosed(dk)) {
+            return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${t.type === "summary" ? "" : mark}</div>`;
+          }
+          return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
+            data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
+        })
+        .join("");
 
-          const ruleRes = ruleReserveDates(t, days[0], days[days.length - 1]);
-
-          const cells = days
-            .map((dk, i) => {
-              const real = state.assignments.find((a) => a.taskId === t.id && a.date === dk);
-              const manualRes = !real && findReserve(t.id, dk);
-              const virt =
-                !real &&
-                t.type === "recurring" &&
-                dk >= tk &&
-                occursOn(t, dk) &&
-                !hasSkip(t.id, dk);
-              const autoRes = !real && !virt && !manualRes && ruleRes.has(dk);
-              let mark = "";
-              let movable = "";
-              if (real) {
-                mark =
-                  real.status === "done"
-                    ? `<span class="mark done-m">✓</span>`
-                    : `<span class="mark todo-m">●</span>`;
-                if (t.type !== "recurring") movable = "has-mark";
-              } else if (manualRes) {
-                mark = `<span class="mark res-m">○</span>`;
-                movable = "has-mark";
-              } else if (virt) {
-                mark = `<span class="mark virt-m">🔁</span>`;
-              } else if (autoRes) {
-                mark = `<span class="mark ares-m">○</span>`;
-              }
-              if (t.type === "summary" || isClosed(dk)) {
-                return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${t.type === "summary" ? "" : mark}</div>`;
-              }
-              return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
-                data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
-            })
-            .join("");
-
-          const rec = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
-          const isCollapsedG = collapsedIds.has(t.id);
-          const caretG = children.length
-            ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsedG ? "▸" : "▾"}</button>`
-            : `<span class="caret ghost"></span>`;
-          /* 実施予定なし: 今日以降の実施日(●)が1件も無い(過去にしか実施予定が
-             無いタスクも「予定なし」扱いにする)。行全体を着色して分かりやすくする */
-          const unsched =
-            (t.type === "single" || t.type === "irregular") &&
-            !t.done &&
-            !children.length &&
-            !state.assignments.some((a) => a.taskId === t.id && a.date >= tk);
-          const endLabel = t.planEnd ? esc(t.planEnd.slice(5).replace("-", "/")) : "";
-          sideRows.push(`
-            <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" data-task="${t.id}">
-              <span class="g-scell-name" style="padding-left:${4 + depth * 14}px">
-                ${caretG}
-                <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
-              </span>
-              <span class="g-scell-end">${endLabel}</span>
-            </div>`);
-          trackRows.push(`<div class="g-trow ${unsched ? "unsched" : ""}">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
-        }
-        if (!collapsedIds.has(t.id)) walk(t.id, depth + 1);
-      });
+      const rec = t.type === "recurring" ? "🔁 " : t.type === "irregular" ? "〰 " : "";
+      const isCollapsedG = collapsedIds.has(t.id);
+      const caretG = children.length
+        ? `<button class="caret" data-action="node-toggle" data-id="${t.id}">${isCollapsedG ? "▸" : "▾"}</button>`
+        : `<span class="caret ghost"></span>`;
+      /* 実施予定なし: 今日以降の実施日(●)が1件も無い(過去にしか実施予定が
+         無いタスクも「予定なし」扱いにする)。行全体を着色して分かりやすくする */
+      const unsched =
+        (t.type === "single" || t.type === "irregular") &&
+        !t.done &&
+        !children.length &&
+        !state.assignments.some((a) => a.taskId === t.id && a.date >= tk);
+      const endLabel = t.planEnd ? esc(t.planEnd.slice(5).replace("-", "/")) : "";
+      sideRows.push(`
+        <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" data-task="${t.id}">
+          <span class="g-scell-name" style="padding-left:${4 + depth * 14}px">
+            ${caretG}
+            <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
+          </span>
+          <span class="g-scell-end">${endLabel}</span>
+        </div>`);
+      trackRows.push(`<div class="g-trow ${unsched ? "unsched" : ""}">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
+    }
+    if (!collapsedIds.has(t.id)) {
+      state.tasks.filter((c) => c.parentId === t.id).forEach((c) => renderTaskRow(c, depth + 1));
+    }
   };
-  walk(null, 0);
+
+  /* 課題ごとにサマリー行(見出し行、日付マスは持たない)を差し込み、その直下に
+     ルートタスクを描画する。課題に属さない未分類タスクは最後にまとめる
+     (orderedRoots()と同じ順序)。サマリー行自体はcollapsedIdsで折りたたみ
+     可能にする(課題idはタスクidと接頭辞が違う(g_/t_)ため、同じSetを
+     共有しても衝突しない) */
+  state.issues.forEach((g) => {
+    if (!issueHasVisibleTask(g.id)) return;
+    const gColor = issueColor(g);
+    const isCollapsedIssue = collapsedIds.has(g.id);
+    const caretIssue = `<button class="caret" data-action="node-toggle" data-id="${g.id}">${isCollapsedIssue ? "▸" : "▾"}</button>`;
+    const endLabel = g.deadline ? esc(g.deadline.slice(5).replace("-", "/")) : "";
+    sideRows.push(`
+      <div class="g-scell g-issue-row" data-issue="${g.id}" style="border-left:3px solid ${gColor}">
+        <span class="g-scell-name" style="padding-left:4px">
+          ${caretIssue}
+          <span class="g-name" title="${esc(g.title)}" data-action="g-showname" data-name="${esc(g.title)}">${esc(g.title)}</span>
+        </span>
+        <span class="g-scell-end">${endLabel}</span>
+      </div>`);
+    const issueCells = days
+      .map((dk, i) => `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`)
+      .join("");
+    trackRows.push(`<div class="g-trow g-issue-row">${weCols}${lockCols}${todayLine}${issueCells}</div>`);
+    if (!isCollapsedIssue) orderedRoots(g.id).forEach((t) => renderTaskRow(t, 1));
+  });
+  orderedRoots(null).forEach((t) => renderTaskRow(t, 0));
 
   box.innerHTML = `
     <div class="g-wrap2">

@@ -1350,6 +1350,11 @@ input[type="date"], input[type="time"] {
 .g-scell.unsched { box-shadow: inset 3px 0 0 var(--warn); }
 .g-scell.unsched .g-name { color: #B0692B; }
 
+/* 課題のサマリー行(見出し行)。日付マスは持たず(.g-cell.locked-cellのみ)、
+   タスク名列は太字・薄い背景にしてタスクの行と見分けやすくする */
+.g-scell.g-issue-row, .g-trow.g-issue-row { background: var(--bg); }
+.g-scell.g-issue-row .g-name { font-weight: 800; }
+
 .p-row.flash {
   animation: rowflash 1.2s ease;
 }
