@@ -953,6 +953,8 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 }
 .g-scell .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-scell.done-task .g-name { text-decoration: line-through; color: var(--done); }
+/* 終了日(タスクの予定終了日・課題の期日)が今日より前なのに未完了の場合、赤字にする */
+.g-scell-end.over { color: var(--alert); }
 .g-trow {
   position: relative;
   height: 34px;

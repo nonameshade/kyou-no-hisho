@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v148"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v149"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1625,13 +1625,14 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
         !children.length &&
         !state.assignments.some((a) => a.taskId === t.id && a.date >= tk);
       const endLabel = t.planEnd ? esc(t.planEnd.slice(5).replace("-", "/")) : "";
+      const endOver = !!(t.planEnd && t.planEnd < tk && !t.done); // 予定終了日が今日より前、かつ未完了
       sideRows.push(`
         <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" data-task="${t.id}">
           <span class="g-scell-name" style="padding-left:${4 + depth * 14}px">
             ${caretG}
             <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
           </span>
-          <span class="g-scell-end">${endLabel}</span>
+          <span class="g-scell-end ${endOver ? "over" : ""}">${endLabel}</span>
         </div>`);
       trackRows.push(`<div class="g-trow ${unsched ? "unsched" : ""}">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
     }
@@ -1651,13 +1652,14 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
     const isCollapsedIssue = collapsedIds.has(g.id);
     const caretIssue = `<button class="caret" data-action="node-toggle" data-id="${g.id}">${isCollapsedIssue ? "▸" : "▾"}</button>`;
     const endLabel = g.deadline ? esc(g.deadline.slice(5).replace("-", "/")) : "";
+    const endOver = !!(g.deadline && g.deadline < tk && g.status !== "done"); // 期日が今日より前、かつ未完了
     sideRows.push(`
       <div class="g-scell g-issue-row" data-issue="${g.id}" style="border-left:3px solid ${gColor}">
         <span class="g-scell-name" style="padding-left:4px">
           ${caretIssue}
           <span class="g-name" title="${esc(g.title)}" data-action="g-showname" data-name="${esc(g.title)}">${esc(g.title)}</span>
         </span>
-        <span class="g-scell-end">${endLabel}</span>
+        <span class="g-scell-end ${endOver ? "over" : ""}">${endLabel}</span>
       </div>`);
     const issueCells = days
       .map((dk, i) => `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`)

@@ -189,7 +189,7 @@ FABの「+ タスクを追加」ボタンは、以前は簡易フォーム（`#a
 
 ### 2.5 左カラム(タスク名+予定終了日)
 
-- 左カラム(`.g-side`)は「タスク名」「予定終了日」の2カラム構成(`.g-scell-name`/`.g-scell-end`、幅はそれぞれ`G_SIDE_NAME_W`=130px/`G_SIDE_END_W`=60pxでapp.js/styles.cssの両方に定義)。予定終了日は`t.planEnd`を`MM/DD`形式で表示し、未設定なら空欄。
+- 左カラム(`.g-side`)は「タスク名」「予定終了日」の2カラム構成(`.g-scell-name`/`.g-scell-end`、幅はそれぞれ`G_SIDE_NAME_W`=130px/`G_SIDE_END_W`=60pxでapp.js/styles.cssの両方に定義)。予定終了日は`t.planEnd`(課題のサマリー行は`g.deadline`、2.7参照)を`MM/DD`形式で表示し、未設定なら空欄。**終了日が今日より前なのに未完了**(タスクは`!t.done`、課題は`g.status !== "done"`)の場合は`.g-scell-end.over`クラスが付き赤字になる。
 - 2カラム分の内容(190px)が`.g-side`自体の表示幅(170px)より広いため、`.g-side-clip`がネイティブの横スクロールビューポートを兼ねる(右側の日付トラック`.g-scroll`と同じ考え方)。指でのスワイプ、Shift+マウスホイールの両方に対応する。
 - 見出し行(「タスク」「終了日」「見積合計」)は`.g-side-head`/`.g-side-head-clip`/`.g-side-head-inner`という、右側の`.g-track-head`/`.g-track-head-clip`/`.g-track-head-inner`と同じ構造・同じ理由(ネイティブstickyを使わない)で、`syncGanttSideHeadX()`が`.g-side-clip`の横スクロール位置に`translateX`で追従させる。
 - Shift+マウスホイールでの横スクロールは、マウスカーソルが左カラム(`.g-side`)の上にあれば左を、それ以外(右側の日付トラック)なら右をスクロールする(`wheel`イベントハンドラの`e.shiftKey`分岐で`e.target.closest(".g-side")`により判定)。
