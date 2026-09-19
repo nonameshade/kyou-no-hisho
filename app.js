@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v152"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v153"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -74,8 +74,7 @@ let view = "today";
 let editingTaskId = null;
 let taskFormReturnAnchor = null; // キャンセル時に戻る行のid(編集なら本人、子タスク追加なら親)
 let editingIssueId = null;
-let editingAsgQuickId = null; // 今日タブの鉛筆アイコンから開く簡易編集(開始時刻・見積のみ)の対象id
-let gcellEdit = null; // 計画タブのマス長押し/右クリック編集の対象 { taskId, date }
+let gcellEdit = null; // 「割り当てを編集」フォームの対象 { taskId, date, touched }。今日タブの鉛筆アイコン・計画タブのマス長押し/右クリックの両方から開く
 let selDate = todayKey();
 let viewDate = todayKey(); // 今日タブで表示中の日付
 let gStart = addDays(todayKey(), -7);
@@ -367,6 +366,63 @@ function ruleReserveDates(task, from, to) {
   }
   return out;
 }
+
+/* ガントの見出し行(課題のサマリー行・summaryタイプのタスク)向けに、配下の
+   タスク群(taskIds)のマークを日付ごとに1つに集約する。同じ日に複数種類の
+   マークが混在する場合の優先順位は、手動の予定(実施日) > 自動の予定
+   (周期タスクの自動発生) > 予備日(手動) > 自動の予備日。戻り値はdaysと
+   同じ長さの配列で、各要素は対応するマーク種別のクラス名(mark todo-m等の
+   type部分)か、何も無ければ空文字列 */
+function summaryDayMarks(taskIds, days) {
+  const tk = todayKey();
+  const dayIdx = new Map(days.map((dk, i) => [dk, i]));
+  const anyRealTodo = new Array(days.length).fill(false);
+  const anyRealDone = new Array(days.length).fill(false);
+  const anyVirt = new Array(days.length).fill(false);
+  const anyRes = new Array(days.length).fill(false);
+  const anyAres = new Array(days.length).fill(false);
+  taskIds.forEach((id) => {
+    const t = taskById(id);
+    if (!t) return;
+    state.assignments.forEach((a) => {
+      if (a.taskId !== id) return;
+      const i = dayIdx.get(a.date);
+      if (i === undefined) return;
+      if (a.status === "done") anyRealDone[i] = true;
+      else anyRealTodo[i] = true;
+    });
+    state.reserves.forEach((r) => {
+      if (r.taskId !== id) return;
+      const i = dayIdx.get(r.date);
+      if (i !== undefined) anyRes[i] = true;
+    });
+    if (t.type === "recurring") {
+      days.forEach((dk, i) => {
+        if (
+          dk >= tk &&
+          occursOn(t, dk) &&
+          !hasSkip(id, dk) &&
+          !state.assignments.some((a) => a.taskId === id && a.date === dk)
+        ) {
+          anyVirt[i] = true;
+        }
+      });
+      ruleReserveDates(t, days[0], days[days.length - 1]).forEach((dk) => {
+        const i = dayIdx.get(dk);
+        if (i !== undefined) anyAres[i] = true;
+      });
+    }
+  });
+  return days.map((_, i) => {
+    if (anyRealTodo[i] || anyRealDone[i]) return anyRealTodo[i] ? "todo-m" : "done-m";
+    if (anyVirt[i]) return "virt-m";
+    if (anyRes[i]) return "res-m";
+    if (anyAres[i]) return "ares-m";
+    return "";
+  });
+}
+
+const SUMMARY_MARK_GLYPH = { "todo-m": "●", "done-m": "✓", "virt-m": "🔁", "res-m": "○", "ares-m": "○" };
 
 /* その日の項目:実際の割り当て + 周期タスクの自動予定(今日以降・スキップ除く) */
 function dayItems(dk) {
@@ -1578,9 +1634,17 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
       }
 
       const ruleRes = ruleReserveDates(t, days[0], days[days.length - 1]);
+      /* summaryタイプ(見出し用タスク)自身はマークを持たないが、配下タスクの
+         マークをうっすらと集約して表示する(サマリー行として一覧性を持たせる) */
+      const summaryMarks = t.type === "summary" ? summaryDayMarks([...descendants(t.id)], days) : null;
 
       const cells = days
         .map((dk, i) => {
+          if (t.type === "summary") {
+            const cat = summaryMarks[i];
+            const faint = cat ? `<span class="mark ${cat} mark-faint">${SUMMARY_MARK_GLYPH[cat]}</span>` : "";
+            return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${faint}</div>`;
+          }
           const real = state.assignments.find((a) => a.taskId === t.id && a.date === dk);
           const manualRes = !real && findReserve(t.id, dk);
           const virt =
@@ -1606,8 +1670,8 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
           } else if (autoRes) {
             mark = `<span class="mark ares-m">○</span>`;
           }
-          if (t.type === "summary" || isClosed(dk)) {
-            return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${t.type === "summary" ? "" : mark}</div>`;
+          if (isClosed(dk)) {
+            return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${mark}</div>`;
           }
           return `<button class="g-cell ${movable}" style="left:${colX(i)}px;width:${G_COLW}px"
             data-action="g-cell" data-task="${t.id}" data-date="${dk}">${mark}</button>`;
@@ -1670,8 +1734,14 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
         <span class="g-scell-end ${endOver ? "over" : ""}">${endLabel}</span>
         <span class="g-scell-est">${estLabel}</span>
       </div>`);
+    const issueTaskIds = state.tasks.filter((t) => t.issueId === g.id).map((t) => t.id);
+    const issueMarks = summaryDayMarks(issueTaskIds, days);
     const issueCells = days
-      .map((dk, i) => `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`)
+      .map((dk, i) => {
+        const cat = issueMarks[i];
+        const faint = cat ? `<span class="mark ${cat} mark-faint">${SUMMARY_MARK_GLYPH[cat]}</span>` : "";
+        return `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px">${faint}</div>`;
+      })
       .join("");
     trackRows.push(`<div class="g-trow g-issue-row">${weCols}${lockCols}${todayLine}${issueCells}</div>`);
     if (!isCollapsedIssue) orderedRoots(g.id).forEach((t) => renderTaskRow(t, 1));
@@ -1832,7 +1902,11 @@ function toggleCell(taskId, dk) {
     }
   }
   save();
-  renderGantt();
+  /* このマスのタスクが計画タブ以外(今日タブの「割り当てを編集」フォーム)
+     から操作された場合にも、閉じたときにその場で反映されるよう、現在
+     表示中のタブに応じて再描画する(renderGantt()固定だと、今日タブ表示中
+     はタイムライン側に反映されなかった) */
+  renderAll();
 }
 
 /* ---------- タスク名の全体表示チップ ---------- */
@@ -3309,7 +3383,11 @@ function tabSwipeEnd() {
 document.addEventListener("pointerup", tabSwipeEnd);
 document.addEventListener("pointercancel", tabSwipeEnd);
 
-/* ---------- 割り当てを編集フォーム(長押し/右クリックで開く) ---------- */
+/* ---------- 割り当てを編集フォーム ---------- */
+/* 計画タブのマス長押し/右クリック(2.3)、今日タブのカードの鉛筆アイコンの
+   どちらから開いても同じフォーム(#gcell-form)を使う(以前は今日タブ側に
+   「タスクを編集」というタイトルの別フォームがあり、実際にはタスク原本
+   ではなくその日の割り当てだけを編集するものだったため紛らわしかった) */
 /* そのマスの現在の状態(実施/予備/自動予定/自動予備/空)を判定する。
    renderGantt()のマス描画と同じ判定式 */
 function gcellState(taskId, dk) {
@@ -3341,7 +3419,7 @@ function gcellIconInfo(st) {
 function openGcellForm(taskId, dk) {
   const t = taskById(taskId);
   if (!t || isClosed(dk)) return;
-  gcellEdit = { taskId, date: dk };
+  gcellEdit = { taskId, date: dk, touched: false };
   document.getElementById("gc-task").textContent = t.title;
   const d = new Date(dk + "T00:00:00");
   const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
@@ -3370,6 +3448,7 @@ function refreshGcellForm() {
 function gcellIconTap() {
   if (!gcellEdit) return;
   toggleCell(gcellEdit.taskId, gcellEdit.date);
+  gcellEdit.touched = true; // アイコンで状態を変えたことを覚えておく(保存時、下記saveGcellForm参照)
   refreshGcellForm();
 }
 
@@ -3381,7 +3460,7 @@ function closeGcellForm() {
 
 function saveGcellForm() {
   if (!gcellEdit) return;
-  const { taskId, date } = gcellEdit;
+  const { taskId, date, touched } = gcellEdit;
   if (isClosed(date)) { closeGcellForm(); return; }
   const t = taskById(taskId);
   const start = document.getElementById("gc-start").value || "09:00";
@@ -3390,9 +3469,16 @@ function saveGcellForm() {
   if (real) {
     real.start = start;
     real.estimateMin = est;
-  } else {
-    /* 実施日でなければ(予備日/自動予定/空)、開始時刻・見積を入力して保存する
-       ことは実施日として確定させることを意味する。既存の予備日/スキップは解除する */
+  } else if (!touched) {
+    /* アイコンには一度も触れていない(空の状態で開いて、開始時刻・見積だけを
+       入力したケース)。この場合に限り、実施日でなければ、開始時刻・見積を
+       入力して保存することは実施日として確定させることを意味する。既存の
+       予備日/スキップは解除する。
+       一方、アイコンで一度でも状態を切り替えていた場合(touched)は、その
+       状態は既にtoggleCell()側で保存・反映済みであり、ここで無条件に
+       実施日へ上書きしてしまうと、せっかく予備日/空などに切り替えた選択が
+       保存のたびに実施日へ戻ってしまう不具合になるため、何もしない
+       (以前はtouchedを見ておらずこの不具合があった) */
     state.reserves = state.reserves.filter((r) => !(r.taskId === taskId && r.date === date));
     if (t.type === "recurring" && hasSkip(taskId, date)) {
       state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === date));
@@ -3404,7 +3490,7 @@ function saveGcellForm() {
   }
   save();
   closeGcellForm();
-  renderGantt();
+  renderAll(); // 今日タブ・計画タブのどちらから開いても、表示中のタブに反映する
 }
 
 /* ---------- 描画:課題タブ(課題ごとにタスクを展開) ---------- */
@@ -3758,17 +3844,6 @@ function updateRecVisibility() {
   todayRow.classList.toggle("hidden", !showToday);
   const todayChk = document.getElementById("t-today");
   document.getElementById("t-today-start-row").classList.toggle("hidden", !showToday || !todayChk.checked);
-}
-
-/* 今日タブの鉛筆アイコンから開く簡易編集。タスク自体ではなく、この日の割り当て
-   (開始時刻・見積)だけを編集する全画面フォーム */
-function openAsgEditForm(a) {
-  editingAsgQuickId = a.id;
-  document.getElementById("ae-start").value = a.start;
-  document.getElementById("ae-est").value = a.estimateMin;
-  document.getElementById("asg-edit-form").classList.remove("hidden");
-  syncFixedOffset();
-  lockBodyScroll();
 }
 
 function openTaskForm(task, parentId, presetIssueId) {
@@ -4280,24 +4355,7 @@ document.addEventListener("click", (e) => {
   }
   else if (action === "asg-edit-open") {
     const a = id ? state.assignments.find((x) => x.id === id) : null;
-    if (a) openAsgEditForm(a);
-  }
-  else if (action === "asg-edit-cancel") {
-    editingAsgQuickId = null;
-    document.getElementById("asg-edit-form").classList.add("hidden");
-    unlockBodyScroll();
-  }
-  else if (action === "asg-edit-save") {
-    const a = editingAsgQuickId ? state.assignments.find((x) => x.id === editingAsgQuickId) : null;
-    if (a) {
-      a.start = document.getElementById("ae-start").value || a.start;
-      a.estimateMin = Math.max(1, Number(document.getElementById("ae-est").value) || a.estimateMin);
-      save();
-      renderAll();
-    }
-    editingAsgQuickId = null;
-    document.getElementById("asg-edit-form").classList.add("hidden");
-    unlockBodyScroll();
+    if (a) openGcellForm(a.taskId, a.date); // 計画タブと同じ「割り当てを編集」フォームを開く(2.3参照)
   }
 
   /* タブ */

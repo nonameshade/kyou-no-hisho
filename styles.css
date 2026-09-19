@@ -1001,6 +1001,9 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
   height: 12px;
   opacity: .8;
 }
+/* サマリー行(課題のサマリー行・summaryタイプのタスク)で、配下タスクの
+   マークを集約してうっすらと示す。通常のマークと見た目は同じで薄くするだけ */
+.g-cell .mark.mark-faint { opacity: .4; }
 .g-dropcol {
   position: absolute;
   top: 0;
