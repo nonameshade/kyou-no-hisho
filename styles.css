@@ -240,39 +240,6 @@ body.overrun #timeline-head { background: var(--overrun-bg); }
 }
 .form-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
 
-/* 計画タブのマス長押し/右クリック編集フォームの、状態(マーク)表示切替ボタン */
-.gc-icon-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  border: 1.5px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 14px;
-  background: var(--surface);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 14px;
-  color: var(--ink);
-}
-.gc-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  flex-shrink: 0;
-  background: #EEF1F4;
-  color: var(--muted);
-}
-.gc-icon.todo-m { background: var(--accent); color: #fff; }
-.gc-icon.done-m { background: var(--done); color: #fff; }
-.gc-icon.res-m { background: transparent; border: 2px solid var(--accent); color: var(--accent); }
-.gc-icon.ares-m { background: transparent; border: 2px dashed var(--muted); color: var(--muted); }
-.gc-icon.virt-m { background: transparent; font-size: 20px; }
-.gc-icon-btn .gc-hint { font-size: 11px; color: var(--muted); margin-left: auto; }
 .add-form input {
   width: 100%;
   border: 1px solid var(--line);

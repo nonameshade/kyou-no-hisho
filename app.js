@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v153"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v154"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -3404,22 +3404,36 @@ function gcellState(taskId, dk) {
   return { t, real, manualRes, virt, autoRes };
 }
 
-function gcellIconInfo(st) {
-  if (st.real) {
-    return st.real.status === "done"
-      ? { icon: "✓", label: "完了", cls: "done-m" }
-      : { icon: "●", label: "実施日", cls: "todo-m" };
+/* ドロップダウン(#gc-state)に出す選択肢。実施日・実施済み・空は常に選べる。
+   予備日は周期タスク以外、自動予定は周期タスクでその日にルール上発生する
+   場合のみ選べる(自動予備日はルールから自動計算されるだけの表示専用の
+   状態で、直接選ぶことはできない。以前からのtoggleCell()の挙動と同じ) */
+function gcellStateOptions(t, dk) {
+  const opts = [];
+  if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk)) {
+    opts.push({ value: "virt", icon: "🔁", label: "自動予定(周期タスク)" });
   }
-  if (st.manualRes) return { icon: "○", label: "予備日", cls: "res-m" };
-  if (st.virt) return { icon: "🔁", label: "自動予定(周期タスク)", cls: "virt-m" };
-  if (st.autoRes) return { icon: "○", label: "予備日(自動)", cls: "ares-m" };
-  return { icon: "—", label: "空(未設定)", cls: "" };
+  opts.push({ value: "empty", icon: "—", label: "空(未設定)" });
+  opts.push({ value: "todo", icon: "●", label: "実施日" });
+  opts.push({ value: "done", icon: "✓", label: "実施済み" });
+  if (t.type !== "recurring") opts.push({ value: "res", icon: "○", label: "予備日" });
+  return opts;
+}
+
+/* gcellState()の結果を、gcellStateOptions()のvalueに変換する
+   (自動予備日は選択肢に無いため、一番近い「空」扱いにする) */
+function gcellCurrentValue(st) {
+  if (st.real) return st.real.status === "done" ? "done" : "todo";
+  if (st.manualRes) return "res";
+  if (st.virt) return "virt";
+  return "empty";
 }
 
 function openGcellForm(taskId, dk) {
   const t = taskById(taskId);
   if (!t || isClosed(dk)) return;
-  gcellEdit = { taskId, date: dk, touched: false };
+  const initialCat = gcellCurrentValue(gcellState(taskId, dk));
+  gcellEdit = { taskId, date: dk, touched: false, initialCat };
   document.getElementById("gc-task").textContent = t.title;
   const d = new Date(dk + "T00:00:00");
   const youbi = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
@@ -3430,25 +3444,87 @@ function openGcellForm(taskId, dk) {
   lockBodyScroll();
 }
 
-/* マークの状態が変わるたび(アイコンタップ後)に表示を更新する */
+/* 状態が変わるたび(ドロップダウン選択後)に表示を更新する */
 function refreshGcellForm() {
   if (!gcellEdit) return;
   const st = gcellState(gcellEdit.taskId, gcellEdit.date);
-  const { icon, label, cls } = gcellIconInfo(st);
-  const iconEl = document.getElementById("gc-icon");
-  iconEl.textContent = icon;
-  iconEl.className = `gc-icon ${cls}`;
-  document.getElementById("gc-icon-label").textContent = label;
+  const sel = document.getElementById("gc-state");
+  const opts = gcellStateOptions(st.t, gcellEdit.date);
+  sel.innerHTML = opts.map((o) => `<option value="${o.value}">${o.icon} ${esc(o.label)}</option>`).join("");
+  sel.value = gcellCurrentValue(st);
   document.getElementById("gc-start").value = st.real ? st.real.start : (st.t.defStart || "09:00");
   document.getElementById("gc-est").value = st.real ? st.real.estimateMin : (st.t.estimateMin || 25);
 }
 
-/* アイコンをタップするとマスをタップしたのと同じ順序(空→●→○→空、周期タスクは
-   自動予定のオン/オフ)で状態が切り替わる。既存のtoggleCell()をそのまま使う */
-function gcellIconTap() {
+/* ドロップダウンで選んだ状態を実際のデータへ反映する。今日タブの完了操作
+   (finishAsg/reopenAsg)と違い execEditable()の日付制限を課さない(締め済み
+   の日以外は、未来日の割り当てでも実施済みを選べるようにしてほしいという
+   要望のため)。実績(経過時間・完了)が既に記録されている実施日から手放す
+   (予備日・自動予定・空にする)場合は、toggleCell()と同じ確認ダイアログを
+   出す。キャンセルされた場合は何も変更せずfalseを返す */
+function applyGcellState(taskId, dk, target) {
+  const t = taskById(taskId);
+  if (!t) return false;
+  const real = state.assignments.find((a) => a.taskId === taskId && a.date === dk);
+  const hasHistory = !!real && (real.status === "done" || real.spentSec > 5);
+
+  if (target === "todo" || target === "done") {
+    if (real) {
+      real.status = target;
+      if (target === "done") {
+        real.spentSec = elapsedSec(real);
+        real.startedAt = null;
+      }
+    } else {
+      state.reserves = state.reserves.filter((r) => !(r.taskId === taskId && r.date === dk));
+      if (t.type === "recurring" && hasSkip(taskId, dk)) {
+        state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === dk));
+      }
+      const start = document.getElementById("gc-start").value || t.defStart || "09:00";
+      const est = Math.max(1, Number(document.getElementById("gc-est").value) || t.estimateMin || 25);
+      state.assignments.push({
+        id: uid("a"), taskId, title: t.title, date: dk, start, estimateMin: est,
+        status: target, spentSec: 0, startedAt: null,
+      });
+    }
+    if (t.type === "single") { t.done = target === "done"; t.archived = target === "done"; }
+  } else if (target === "res") {
+    if (real) {
+      if (hasHistory && !confirm("実績が記録されています。予備日に変えますか?")) return false;
+      state.assignments = state.assignments.filter((a) => a.id !== real.id);
+    }
+    if (!findReserve(taskId, dk)) state.reserves.push({ id: uid("r"), taskId, date: dk });
+  } else if (target === "virt") {
+    if (real) {
+      if (hasHistory && !confirm("実績が記録されています。この割り当てを取り消しますか?")) return false;
+      state.assignments = state.assignments.filter((a) => a.id !== real.id);
+    }
+    state.skips = state.skips.filter((s) => !(s.taskId === taskId && s.date === dk));
+  } else {
+    // "empty"
+    if (real) {
+      if (hasHistory && !confirm("実績が記録されています。この割り当てを取り消しますか?")) return false;
+      state.assignments = state.assignments.filter((a) => a.id !== real.id);
+    }
+    state.reserves = state.reserves.filter((r) => !(r.taskId === taskId && r.date === dk));
+    if (t.type === "recurring" && dk >= todayKey() && occursOn(t, dk) && !hasSkip(taskId, dk)) {
+      state.skips.push({ taskId, date: dk });
+    }
+  }
+  save();
+  return true;
+}
+
+/* ドロップダウンの選択が変わるたびに呼ばれる。キャンセルされて何も
+   変わらなかった場合も、refreshGcellForm()で選択肢を実際の状態に戻す */
+function gcellStateChange() {
   if (!gcellEdit) return;
-  toggleCell(gcellEdit.taskId, gcellEdit.date);
-  gcellEdit.touched = true; // アイコンで状態を変えたことを覚えておく(保存時、下記saveGcellForm参照)
+  const sel = document.getElementById("gc-state");
+  const ok = applyGcellState(gcellEdit.taskId, gcellEdit.date, sel.value);
+  if (ok) {
+    gcellEdit.touched = true; // 状態を明示的に変えたことを覚えておく(保存時、下記saveGcellForm参照)
+    renderAll();
+  }
   refreshGcellForm();
 }
 
@@ -3460,7 +3536,7 @@ function closeGcellForm() {
 
 function saveGcellForm() {
   if (!gcellEdit) return;
-  const { taskId, date, touched } = gcellEdit;
+  const { taskId, date, touched, initialCat } = gcellEdit;
   if (isClosed(date)) { closeGcellForm(); return; }
   const t = taskById(taskId);
   const start = document.getElementById("gc-start").value || "09:00";
@@ -3469,15 +3545,16 @@ function saveGcellForm() {
   if (real) {
     real.start = start;
     real.estimateMin = est;
-  } else if (!touched) {
-    /* アイコンには一度も触れていない(空の状態で開いて、開始時刻・見積だけを
-       入力したケース)。この場合に限り、実施日でなければ、開始時刻・見積を
-       入力して保存することは実施日として確定させることを意味する。既存の
-       予備日/スキップは解除する。
-       一方、アイコンで一度でも状態を切り替えていた場合(touched)は、その
-       状態は既にtoggleCell()側で保存・反映済みであり、ここで無条件に
-       実施日へ上書きしてしまうと、せっかく予備日/空などに切り替えた選択が
-       保存のたびに実施日へ戻ってしまう不具合になるため、何もしない
+  } else if (!touched && initialCat === "empty") {
+    /* ドロップダウンの状態には一度も触れておらず、かつ開いた時点で「空」
+       だった場合に限り(予備日/自動予定の状態のまま開始時刻・見積だけ変えて
+       保存したケースを誤って実施日にしないため)、開始時刻・見積を入力して
+       保存することは実施日として確定させることを意味する。既存の予備日/
+       スキップは解除する。
+       一方、ドロップダウンで一度でも状態を切り替えていた場合(touched)は、
+       その状態は既にapplyGcellState()側で保存・反映済みであり、ここで
+       無条件に実施日へ上書きしてしまうと、せっかく予備日/空などに切り替えた
+       選択が保存のたびに実施日へ戻ってしまう不具合になるため、何もしない
        (以前はtouchedを見ておらずこの不具合があった) */
     state.reserves = state.reserves.filter((r) => !(r.taskId === taskId && r.date === date));
     if (t.type === "recurring" && hasSkip(taskId, date)) {
@@ -4420,8 +4497,6 @@ document.addEventListener("click", (e) => {
     renderGantt();
   } else if (action === "g-cell") {
     if (!suppressClick) toggleCell(btn.dataset.task, btn.dataset.date);
-  } else if (action === "gc-icon-tap") {
-    gcellIconTap();
   } else if (action === "gc-cancel") {
     closeGcellForm();
   } else if (action === "gc-save") {
@@ -4640,6 +4715,7 @@ document.addEventListener("change", (e) => {
     localStorage.setItem("hisho:ui:showarch", showArch ? "1" : "0");
     renderGantt();
   }
+  if (e.target.id === "gc-state") gcellStateChange();
 });
 
 /* 超過警告ポップアップは画面のどこを押しても閉じる(警告マーク自身のタップで開いた瞬間は除く) */
