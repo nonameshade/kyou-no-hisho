@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v146"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v147"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -3769,10 +3769,12 @@ function openTaskForm(task, parentId, presetIssueId) {
   }
   document.getElementById("task-delete-row").classList.toggle("hidden", !task);
   /* 「今日に追加する」は新規作成時のみ(既存タスクの編集では出さない)。
-     #add-formのcanTodayと同じロジックで既定チェック/無効化する */
+     有効/無効(disabled)は#add-formのcanTodayと同じロジック(閲覧中の日付が
+     編集可能かどうか)。既定のチェック状態は、今日タブから開いた場合のみON、
+     それ以外のタブ(課題タブ等)から開いた場合はOFFにする */
   const todayChk = document.getElementById("t-today");
   const canToday = !task && execEditable(viewDate);
-  todayChk.checked = canToday;
+  todayChk.checked = canToday && view === "today";
   todayChk.disabled = !canToday;
   document.getElementById("t-today-start").value = "";
   updateRecVisibility();
