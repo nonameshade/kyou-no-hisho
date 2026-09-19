@@ -955,6 +955,19 @@ body[data-view="gantt"] .wrap { max-width: 980px; padding-bottom: 0; }
 .g-scell.done-task .g-name { text-decoration: line-through; color: var(--done); }
 /* 終了日(タスクの予定終了日・課題の期日)が今日より前なのに未完了の場合、赤字にする */
 .g-scell-end.over { color: var(--alert); }
+/* 見積列(タスクの見積時間、課題の行はその配下タスクの見積合計)。幅はapp.jsのG_SIDE_EST_Wと合わせること */
+.g-scell-est {
+  flex: 0 0 44px;
+  width: 44px;
+  padding: 0 8px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
 .g-trow {
   position: relative;
   height: 34px;

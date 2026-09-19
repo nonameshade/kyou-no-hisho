@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v150"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v151"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -83,6 +83,7 @@ const G_DAYS = 42;
 const G_COLW = 26;
 const G_SIDE_NAME_W = 130; // 左カラム(タスク名列)の幅。styles.cssの.g-scell-nameと合わせること
 const G_SIDE_END_W = 60; // 左カラム(予定終了日列)の幅。styles.cssの.g-scell-endと合わせること
+const G_SIDE_EST_W = 44; // 左カラム(見積列)の幅。styles.cssの.g-scell-estと合わせること
 
 function load() {
   try {
@@ -1489,7 +1490,7 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
   const keepLeft = prevScroll ? prevScroll.scrollLeft : null;
   const prevSideScroll = box.querySelector(".g-side-clip");
   const keepSideLeft = prevSideScroll ? prevSideScroll.scrollLeft : null;
-  const sideW = G_SIDE_NAME_W + G_SIDE_END_W;
+  const sideW = G_SIDE_NAME_W + G_SIDE_END_W + G_SIDE_EST_W;
 
   const days = [...Array(G_DAYS)].map((_, i) => addDays(gStart, i));
   const tk = todayKey();
@@ -1627,6 +1628,7 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
         !state.assignments.some((a) => a.taskId === t.id && a.date >= tk);
       const endLabel = t.planEnd ? esc(t.planEnd.slice(5).replace("-", "/")) : "";
       const endOver = !!(t.planEnd && t.planEnd < tk && !t.done); // 予定終了日が今日より前、かつ未完了
+      const estLabel = t.estimateMin ? fmtH(t.estimateMin).replace("分", "m") : "";
       sideRows.push(`
         <div class="g-scell ${t.done ? "done-task" : ""} ${unsched ? "unsched" : ""}" data-task="${t.id}">
           <span class="g-scell-name" style="padding-left:${4 + depth * 14}px">
@@ -1634,6 +1636,7 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
             <span class="g-name" title="${esc(t.title)}" data-action="g-showname" data-name="${esc(t.title)}">${rec}${esc(t.title)}</span>
           </span>
           <span class="g-scell-end ${endOver ? "over" : ""}">${endLabel}</span>
+          <span class="g-scell-est">${estLabel}</span>
         </div>`);
       trackRows.push(`<div class="g-trow ${unsched ? "unsched" : ""}">${weCols}${lockCols}${todayLine}${bar}${cells}</div>`);
     }
@@ -1654,6 +1657,10 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
     const caretIssue = `<button class="caret" data-action="node-toggle" data-id="${g.id}">${isCollapsedIssue ? "▸" : "▾"}</button>`;
     const endLabel = g.deadline ? esc(g.deadline.slice(5).replace("-", "/")) : "";
     const endOver = !!(g.deadline && g.deadline < tk && g.status !== "done"); // 期日が今日より前、かつ未完了
+    const gEstTotal = state.tasks
+      .filter((t) => t.issueId === g.id)
+      .reduce((s, t) => s + (t.estimateMin || 0), 0);
+    const estLabel = gEstTotal ? fmtH(gEstTotal).replace("分", "m") : "";
     sideRows.push(`
       <div class="g-scell g-issue-row" data-issue="${g.id}" style="border-left:3px solid ${gColor}">
         <span class="g-scell-name" style="padding-left:4px">
@@ -1661,6 +1668,7 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
           <span class="g-name" title="${esc(g.title)}" data-action="g-showname" data-name="${esc(g.title)}">${esc(g.title)}</span>
         </span>
         <span class="g-scell-end ${endOver ? "over" : ""}">${endLabel}</span>
+        <span class="g-scell-est">${estLabel}</span>
       </div>`);
     const issueCells = days
       .map((dk, i) => `<div class="g-cell locked-cell" style="left:${colX(i)}px;width:${G_COLW}px"></div>`)
@@ -1676,8 +1684,8 @@ function renderGantt(refreshVisibility, scrollToTodayLeft) {
         <div class="g-side-head">
           <div class="g-side-head-clip">
             <div class="g-side-head-inner" style="width:${sideW}px">
-              <div class="g-scell g-sh"><span class="g-scell-name">タスク</span><span class="g-scell-end">終了日</span></div>
-              <div class="g-scell g-ss"><span class="g-scell-name">見積合計</span><span class="g-scell-end"></span></div>
+              <div class="g-scell g-sh"><span class="g-scell-name">タスク</span><span class="g-scell-end">終了日</span><span class="g-scell-est">見積</span></div>
+              <div class="g-scell g-ss"><span class="g-scell-name">見積合計</span><span class="g-scell-end"></span><span class="g-scell-est"></span></div>
             </div>
           </div>
         </div>
