@@ -12,7 +12,7 @@
    ============================================================ */
 
 const STORE_KEY = "hisho:data:v1";
-const APP_VERSION = "v149"; // sw.jsのCACHE版数と揃えて更新すること
+const APP_VERSION = "v150"; // sw.jsのCACHE版数と揃えて更新すること
 
 /* 今日タブのカード編集ボタン用に新規デザインした鉛筆アイコン(SVG) */
 const PENCIL_ICON = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -388,6 +388,7 @@ function dayItems(dk) {
             start: t.defStart || "09:00",
             estimateMin: t.estimateMin || 25,
             status: "todo",
+            spentSec: 0, // 仮想カードは実施履歴を持たないため0(未設定だとelapsedSec()がNaNになる)
           }))
       : [];
   return real.concat(virt).sort((x, y) => hmToMin(x.start) - hmToMin(y.start));
